@@ -1,0 +1,12 @@
+{
+  "name" : "camp-card-management",
+  "version-string" : "1.0.0",
+  "builtin-baseline" : "5363acb796e576328288fae60c25304e227e9839",
+  "dependencies" : [ {
+    "name" : "yyjson",
+    "version>=" : "0.13.0"
+  }, {
+    "name" : "openssl",
+    "version>=" : "3.6.5#2"
+  } ]
+}
