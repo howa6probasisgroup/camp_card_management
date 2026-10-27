@@ -2,7 +2,6 @@
 #define CAMP_CARD_PASSWORD_H
 
 #include "common.h"
-#include <stdbool.h>
 
 /// OpenSSL Crypto >= 3.0 实现；RAND_bytes 随机盐，PBKDF2-HMAC-SHA-256，
 /// 200000 次迭代、32 字节输出，小写 hex。密码 8..64 字节，不保存明文。
