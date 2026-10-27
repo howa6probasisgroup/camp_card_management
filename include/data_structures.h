@@ -56,7 +56,8 @@ void account_list_init(AccountList *list);
 bool account_list_append(AccountList *list, const Account *value);
 /// O(n) 查找首个匹配用户名；未找到或参数为空返回 NULL。返回借用指针，节点删除或
 /// clear 后失效，不得 free。
-Account *account_list_find_by_username(const AccountList *list, const char *username);
+Account *account_list_find_by_username(const AccountList *list,
+                                       const char *username);
 /// O(n) 删除首个匹配节点；未找到或参数为空返回 false。
 bool account_list_remove_by_username(AccountList *list, const char *username);
 /// O(1) 返回节点数量；NULL 返回 0。
