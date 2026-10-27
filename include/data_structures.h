@@ -2,7 +2,6 @@
 #define CAMP_CARD_DATA_STRUCTURES_H
 
 #include "models.h"
-#include <stdbool.h>
 #include <stddef.h>
 
 /// 列表自有节点，仅供调用方只读遍历；不得自行链接或释放。
@@ -42,7 +41,7 @@ void student_list_init(StudentList *list);
 bool student_list_append(StudentList *list, const StudentCardRecord *value);
 /// O(n) 查找首个匹配学号；未找到或参数为空返回 NULL。返回借用指针，节点删除或
 /// clear 后失效，不得 free。
-StudentCardRecord *student_list_find_by_id(StudentList *list,
+StudentCardRecord *student_list_find_by_id(const StudentList *list,
                                            const char *student_id);
 /// O(n) 删除首个匹配节点；未找到或参数为空返回 false。
 bool student_list_remove_by_id(StudentList *list, const char *student_id);
@@ -57,7 +56,7 @@ void account_list_init(AccountList *list);
 bool account_list_append(AccountList *list, const Account *value);
 /// O(n) 查找首个匹配用户名；未找到或参数为空返回 NULL。返回借用指针，节点删除或
 /// clear 后失效，不得 free。
-Account *account_list_find_by_username(AccountList *list, const char *username);
+Account *account_list_find_by_username(const AccountList *list, const char *username);
 /// O(n) 删除首个匹配节点；未找到或参数为空返回 false。
 bool account_list_remove_by_username(AccountList *list, const char *username);
 /// O(1) 返回节点数量；NULL 返回 0。
