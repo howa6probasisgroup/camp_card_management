@@ -4,6 +4,8 @@
 
 小组成员维护各自的开发分支，通过 PR 提交代码；具体流程见 [小组协作约定](CONTRIBUTING.md)。
 
+各成员任务：[成员 A](docs/tasks/a.md)、[成员 B](docs/tasks/b.md)、[成员 C](docs/tasks/c.md)。
+
 ## 依赖
 
 - yyjson：JSON 解析与序列化。
