@@ -49,17 +49,18 @@ AppResult storage_record_save(const StudentCardRecord *record);
 /// APP_ERR_IO，分配失败返回 APP_ERR_NO_MEMORY。
 AppResult storage_record_list(StudentList *out);
 /// 姓名索引非权威；仅跳过非法索引文件名、失效学号和姓名不符记录；
-/// 主记录损坏或 IO 错误必须传播。无命中返回 APP_OK + 空表。
-/// 须先初始化存储；无效参数返回 APP_ERR_INVALID_ARGUMENT，损坏数据返回
-/// APP_ERR_INVALID_DATA。 文件不存在返回 APP_ERR_NOT_FOUND，系统读写失败返回
+/// 主记录损坏或 IO 错误必须传播；姓名目录不存在、为空或无有效命中均返回 APP_OK
+/// 空表。 须先初始化存储；无效参数返回 APP_ERR_INVALID_ARGUMENT，损坏数据返回
+/// APP_ERR_INVALID_DATA。 单个主记录不存在时跳过，系统读写失败返回
 /// APP_ERR_IO，分配失败返回 APP_ERR_NO_MEMORY。
 AppResult storage_record_find_by_name(const char *name, StudentList *out);
 /// 已存在的空索引项返回 APP_OK；先保存主记录，再追加索引。
 /// 学号路径 2-2-2-1-2；用户名 Base64URL 无填充；姓名同样编码后每两字符分层。
-/// 索引文件名为学号，内容为空。不自动修复或重建。
-/// 须先初始化存储；无效参数返回 APP_ERR_INVALID_ARGUMENT，损坏数据返回
-/// APP_ERR_INVALID_DATA。 文件不存在返回 APP_ERR_NOT_FOUND，系统读写失败返回
-/// APP_ERR_IO，分配失败返回 APP_ERR_NO_MEMORY。
+/// 索引文件名为学号，内容为空；已有非空索引或非普通文件返回
+/// APP_ERR_INVALID_DATA。 不自动修复或重建。 须先初始化存储；无效参数返回
+/// APP_ERR_INVALID_ARGUMENT，损坏数据返回 APP_ERR_INVALID_DATA。 文件不存在返回
+/// APP_ERR_NOT_FOUND，系统读写失败返回 APP_ERR_IO，分配失败返回
+/// APP_ERR_NO_MEMORY。
 AppResult storage_name_index_append(const char *name, const char *student_id);
 /// 统计有效账号，成功写入 out_count；损坏账号返回
 /// APP_ERR_INVALID_DATA，不能当作无账号触发初始化。
