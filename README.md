@@ -13,6 +13,32 @@
 
 依赖声明与版本见 [vcpkg.json](vcpkg.json)，构建配置见 [CMakeLists.txt](CMakeLists.txt)。
 
+存储字段、路径与查询规则见 [存储格式与查询契约](docs/storage-schema.md)。
+
+## 构建与测试
+
+使用已准备好的 Clang、CMake 和 vcpkg，在终端将 `VCPKG_ROOT` 设为本机 vcpkg 根目录。
+
+macOS 或其他支持 POSIX shell 的终端：
+
+```sh
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_MANIFEST_MODE=ON -DCMAKE_C_COMPILER=clang
+cmake --build build
+ctest --test-dir build --output-on-failure
+./build/camp_card_management
+```
+
+Windows PowerShell（Clang 与所需构建工具须已在环境中）：
+
+```powershell
+cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_MANIFEST_MODE=ON -DCMAKE_C_COMPILER=clang
+cmake --build build
+ctest --test-dir build --output-on-failure
+.\build\camp_card_management.exe
+```
+
+首次配置由 vcpkg 根据清单准备依赖，需要网络和正常工具缓存的访问权限。使用全新的构建目录；旧目录若缓存了关闭的清单模式，使用 CMake 的 `--fresh` 重新配置。依赖安装完成不代表业务功能已经实现。
+
 ## 基本契约
 
 - 管理员管理账号；卡业务员开卡、查询、冻结与解冻；卡用户查询自己的卡、修改联系电话、充值和消费。业务接口自行检查权限。

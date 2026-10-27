@@ -10,8 +10,11 @@
 AppResult password_create(const char *password,
                           char salt_hex_out[PASSWORD_SALT_HEX_LENGTH + 1],
                           char hash_hex_out[PASSWORD_HASH_HEX_LENGTH + 1]);
-/// 校验使用恒定时间比较；不匹配、非法参数/hex 或内部失败统一 false。
-bool password_verify(const char *password, const char *salt_hex,
-                     const char *hash_hex);
+/// 使用恒定时间比较；匹配返回 APP_OK，不匹配返回 APP_ERR_AUTH_FAILED。
+/// NULL 或密码长度不合法返回 APP_ERR_INVALID_ARGUMENT；盐或派生值格式错误
+/// 返回 APP_ERR_INVALID_DATA；派生失败返回 APP_ERR_IO，分配失败返回
+/// APP_ERR_NO_MEMORY。
+AppResult password_verify(const char *password, const char *salt_hex,
+                          const char *hash_hex);
 
 #endif // CAMP_CARD_PASSWORD_H

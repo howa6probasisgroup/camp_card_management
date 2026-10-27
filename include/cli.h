@@ -6,7 +6,8 @@
 
 /// 调用前 storage_init 成功，返回后由 main 调用 storage_shutdown。
 /// 仅通过 Service 执行业务；CLI 不直接调用 Storage（生命周期由 main 管理）。
-/// 首次管理员初始化由 auth_bootstrap_admin 判断，三角色菜单按权限路由。
+/// 通过 auth_needs_bootstrap 查询初始化状态，查询失败不得进入初始化流程。
+/// 仅在需要时调用 auth_bootstrap_admin 创建管理员，三角色菜单按权限路由。
 /// UTF-8 输入输出，Windows 明确设置编码；EOF 正常退出 APP_OK。
 /// 超长输入须排空该行再报错；密码可回显，但不得主动打印或记录。
 /// 退出登录清除本地会话。业务错误提示后留在菜单，不泄露路径/凭据。
