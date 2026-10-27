@@ -199,7 +199,8 @@ bool string_list_append_unique(StringList *list, const char *value) {
   if (list == nullptr || value == nullptr) {
     return false;
   }
-  for (const StringNode *node = list->head; node != nullptr; node = node->next) {
+  for (const StringNode *node = list->head; node != nullptr;
+       node = node->next) {
     if (strcmp(node->value, value) == 0) {
       return true;
     }
@@ -234,7 +235,8 @@ bool string_list_contains(const StringList *list, const char *value) {
   if (list == nullptr || value == nullptr) {
     return false;
   }
-  for (const StringNode *node = list->head; node != nullptr; node = node->next) {
+  for (const StringNode *node = list->head; node != nullptr;
+       node = node->next) {
     if (strcmp(node->value, value) == 0) {
       return true;
     }
