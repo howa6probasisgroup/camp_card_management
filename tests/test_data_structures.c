@@ -22,7 +22,8 @@ static void check(const bool condition, const char *expression,
 
 #define CHECK(condition) check((condition), #condition, __LINE__)
 
-static void set_text(char *destination, const size_t capacity, const char *source) {
+static void set_text(char *destination, const size_t capacity,
+                     const char *source) {
   const size_t length = strlen(source);
   if (length >= capacity) {
     fprintf(stderr, "test setup error: text does not fit buffer\n");
@@ -97,7 +98,8 @@ static bool student_list_is_sound(const StudentList *list,
   }
   const StudentNode *last = nullptr;
   size_t walked = 0;
-  for (const StudentNode *node = list->head; node != nullptr; node = node->next) {
+  for (const StudentNode *node = list->head; node != nullptr;
+       node = node->next) {
     last = node;
     walked++;
     if (walked > expected) {
@@ -144,7 +146,8 @@ static bool string_list_is_sound(const StringList *list,
   }
   const StringNode *last = nullptr;
   size_t walked = 0;
-  for (const StringNode *node = list->head; node != nullptr; node = node->next) {
+  for (const StringNode *node = list->head; node != nullptr;
+       node = node->next) {
     last = node;
     walked++;
     if (walked > expected) {
@@ -221,8 +224,8 @@ static void test_student_list_empty_and_null_safety() {
   CHECK(student_list_count(nullptr) == 0);
   student_list_clear(nullptr);
 
-  const StudentCardRecord record = make_student("251543201", "张三", 0,
-                                          CARD_STATUS_ACTIVE);
+  const StudentCardRecord record =
+      make_student("251543201", "张三", 0, CARD_STATUS_ACTIVE);
   CHECK(student_list_append(nullptr, &record) == false);
   CHECK(student_list_append(&list, nullptr) == false);
   CHECK(student_list_find_by_id(&list, nullptr) == nullptr);
@@ -343,8 +346,8 @@ static void test_student_list_remove() {
   CHECK(strcmp(list.tail->value.student_id, "251543202") == 0);
   CHECK(student_list_append(&list, &first));
   CHECK(student_list_is_sound(&list, 2));
-  const char *reappended[] = {"251543202", "251543201"};
-  CHECK(student_ids_are(&list, reappended, 2));
+  const char *after_append[] = {"251543202", "251543201"};
+  CHECK(student_ids_are(&list, after_append, 2));
 
   student_list_clear(&list);
 }
@@ -532,7 +535,8 @@ static void test_many_operations() {
   }
   CHECK(student_list_is_sound(&list, NODE_COUNT / 2));
   size_t index = 0;
-  for (const StudentNode *node = list.head; node != nullptr; node = node->next) {
+  for (const StudentNode *node = list.head; node != nullptr;
+       node = node->next) {
     char expected_id[STUDENT_ID_LENGTH + 1];
     snprintf(expected_id, sizeof expected_id, "%09d", (int)(index * 2 + 1));
     CHECK(strcmp(node->value.student_id, expected_id) == 0);
@@ -559,7 +563,7 @@ int main() {
     printf("test_data_structures: %zu checks passed\n", g_checks);
     return EXIT_SUCCESS;
   }
-  fprintf(stderr, "test_data_structures: %zu of %zu checks failed\n", g_failures,
-          g_checks);
+  fprintf(stderr, "test_data_structures: %zu of %zu checks failed\n",
+          g_failures, g_checks);
   return EXIT_FAILURE;
 }
