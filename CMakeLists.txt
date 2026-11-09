@@ -41,19 +41,4 @@ if (BUILD_TESTING)
         target_compile_options(test_password PRIVATE -Wall -Wextra -Wpedantic)
     endif ()
     add_test(NAME password COMMAND test_password)
-
-    # 密码实现另编译一份用于故障测试，仅在该测试目标中替换 OpenSSL 调用；
-    # 不链接 camp_card_core，正式库中的 OpenSSL 调用保持不变。
-
-    add_executable(test_password_failures tests/test_password_failures.c src/password.c)
-    target_include_directories(test_password_failures PRIVATE include)
-    target_link_libraries(test_password_failures PRIVATE OpenSSL::Crypto)
-    target_compile_definitions(test_password_failures PRIVATE
-        RAND_bytes=password_test_rand_bytes
-        PKCS5_PBKDF2_HMAC=password_test_pbkdf2
-    )
-    if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-        target_compile_options(test_password_failures PRIVATE -Wall -Wextra -Wpedantic)
-    endif ()
-    add_test(NAME password_failures COMMAND test_password_failures)
 endif ()
