@@ -15,7 +15,8 @@
 AppResult cli_run(void);
 /**
  * @brief 金额解析：只接受 ASCII 数字及可选小数点后 1..2 位数字， 至少一位整数；
- * @details 无空白/正负号/指数/逗号，接受 0，溢出 `APP_ERR_INVALID_ARGUMENT`。 不用浮点数，失败不改变 out_cents；充值/消费另行拒绝零。
+ * @details 无空白/正负号/指数/逗号，接受 0，溢出 `APP_ERR_INVALID_ARGUMENT`。 整数输入按元换算为分（例如 `1` 表示 100 分），带小数点时最多两位小数。
+ *          不用浮点数，失败不改变 out_cents；充值/消费另行拒绝零。
  * @param[in] text 待解析的金额文本；只接受规定格式的 ASCII 数字金额。
  * @param[out] out_cents 成功时接收整数分金额；解析失败时保持原值。
  * @return `APP_OK` 表示解析成功；格式错误、参数无效或数值溢出返回 `APP_ERR_INVALID_ARGUMENT`。

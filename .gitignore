@@ -1,0 +1,8 @@
+# CMake、vcpkg 与本地编译产物
+/build/
+/cmake-build-*/
+/vcpkg_installed/
+*.exe
+
+# 运行时数据目录
+/data/
