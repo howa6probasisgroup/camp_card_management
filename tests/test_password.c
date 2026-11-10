@@ -59,7 +59,7 @@ static void test_created_credentials_round_trip() {
 static void test_password_length_boundaries() {
   char salt[PASSWORD_SALT_HEX_LENGTH + 1] = {0};
   char hash[PASSWORD_HASH_HEX_LENGTH + 1] = {0};
-  char short_password[PASSWORD_MIN_BYTES] = "1234567";
+  constexpr char short_password[PASSWORD_MIN_BYTES] = "1234567";
   char max_password[PASSWORD_MAX_BYTES + 1];
   memset(max_password, 'x', PASSWORD_MAX_BYTES);
   max_password[PASSWORD_MAX_BYTES] = '\0';

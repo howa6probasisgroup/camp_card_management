@@ -75,7 +75,7 @@ static void test_student_records_are_queryable_copies() {
 
   set_text(original.name, sizeof original.name, "赵六");
   original.balance_cents = 9999;
-  StudentCardRecord *found = student_list_find_by_id(&list, "251543201");
+  const StudentCardRecord *found = student_list_find_by_id(&list, "251543201");
   CHECK(found != nullptr);
   if (found != nullptr) {
     CHECK(strcmp(found->name, "张三") == 0);
@@ -101,7 +101,7 @@ static void test_account_roles_are_queryable_by_username() {
   CHECK(account_list_append(&list, &admin));
   CHECK(account_list_append(&list, &user));
 
-  Account *found = account_list_find_by_username(&list, "user001");
+  const Account *found = account_list_find_by_username(&list, "user001");
   CHECK(found != nullptr && found->role == ROLE_CARD_USER);
   CHECK(found != nullptr && strcmp(found->student_id, "251543201") == 0);
 
