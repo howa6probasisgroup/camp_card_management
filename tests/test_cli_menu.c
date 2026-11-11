@@ -11,7 +11,7 @@
 #include <string.h>
 
 static int cli_test_getchar();
-static int cli_test_ferror(const FILE *stream);
+static int cli_test_ferror(FILE *stream);
 
 #define getchar cli_test_getchar
 #define ferror cli_test_ferror
@@ -24,17 +24,25 @@ static int cli_test_ferror(const FILE *stream);
 static const char *g_input;
 static size_t g_position;
 static bool g_force_error;
+static bool g_fail_output_on_read;
 
 static int cli_test_getchar() {
+  if (g_fail_output_on_read) {
+    g_fail_output_on_read = false;
+    // 最后一次提示已刷新，此后的输出写入会失败。
+    if (freopen("cli_menu_test_output.txt", "r", stdout) == nullptr) {
+      fprintf(stderr, "test setup error: cannot make stdout read-only\n");
+      exit(EXIT_FAILURE);
+    }
+  }
   if (g_input == nullptr || g_input[g_position] == '\0') {
     return EOF;
   }
   return (unsigned char)g_input[g_position++];
 }
 
-static int cli_test_ferror(const FILE *stream) {
-  (void)stream;
-  return g_force_error ? 1 : 0;
+static int cli_test_ferror(FILE *stream) {
+  return stream == stdin ? g_force_error : ferror(stream);
 }
 
 static size_t g_checks;
@@ -193,6 +201,7 @@ static void reset_fakes() {
   g_input = nullptr;
   g_position = 0;
   g_force_error = false;
+  g_fail_output_on_read = false;
 }
 
 AppResult auth_needs_bootstrap(bool *out_needed) {
@@ -387,13 +396,13 @@ static void begin_capture() {
     fprintf(stderr, "test setup error: cannot redirect stdout\n");
     exit(EXIT_FAILURE);
   }
-  (void)setvbuf(stdout, nullptr, _IONBF, 0);
+  if (setvbuf(stdout, nullptr, _IOFBF, BUFSIZ) != 0) {
+    fprintf(stderr, "test setup error: cannot buffer stdout\n");
+    exit(EXIT_FAILURE);
+  }
 }
 
 static char *load_capture() {
-  if (fflush(stdout) != 0) {
-    return nullptr;
-  }
   FILE *stream = fopen("cli_menu_test_output.txt", "rb");
   if (stream == nullptr) {
     return nullptr;
@@ -451,6 +460,34 @@ static void test_bootstrap_and_admin_login() {
   CHECK(strcmp(g_created_username, "clerk01") == 0);
   CHECK(g_created_role == ROLE_CARD_CLERK);
   CHECK(g_created_student_id[0] == '\0');
+}
+
+static void test_bootstrap_retries_overlong_fields() {
+  const struct {
+    const char *prefix;
+    size_t max_bytes;
+  } cases[] = {
+      {.prefix = "", .max_bytes = USERNAME_MAX_BYTES},
+      {.prefix = "discarded\n", .max_bytes = PASSWORD_MAX_BYTES},
+      {.prefix = "discarded\nFirstPass1\n", .max_bytes = PASSWORD_MAX_BYTES},
+  };
+  constexpr char retry[] = "\nadmin\nAdmin1234\nAdmin1234\n0\n";
+  for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+    reset_fakes();
+    g_needs_bootstrap = true;
+    char script[sizeof "discarded\nFirstPass1\n" + USERNAME_MAX_BYTES +
+                PASSWORD_MAX_BYTES + sizeof retry];
+    const size_t prefix_length = strlen(cases[i].prefix);
+    memcpy(script, cases[i].prefix, prefix_length);
+    memset(script + prefix_length, 'x', cases[i].max_bytes + 1);
+    memcpy(script + prefix_length + cases[i].max_bytes + 1, retry,
+           sizeof retry);
+
+    CHECK(run_input(script) == APP_OK);
+    CHECK(g_bootstrap_calls == 1);
+    CHECK(strcmp(g_bootstrap_username, "admin") == 0);
+    CHECK(strcmp(g_bootstrap_password, "Admin1234") == 0);
+  }
 }
 
 static void test_admin_menu() {
@@ -625,6 +662,46 @@ static void test_immediate_eof() {
   CHECK(run_input("") == APP_OK);
 }
 
+static void test_final_argument_at_eof() {
+  const struct {
+    AppResult service_result;
+    AppResult cli_result;
+  } cases[] = {
+      {.service_result = APP_ERR_IO, .cli_result = APP_ERR_IO},
+      {.service_result = APP_ERR_INVALID_DATA,
+       .cli_result = APP_ERR_INVALID_DATA},
+      {.service_result = APP_ERR_NO_MEMORY, .cli_result = APP_ERR_NO_MEMORY},
+      {.service_result = APP_ERR_NOT_FOUND, .cli_result = APP_OK},
+      {.service_result = APP_OK, .cli_result = APP_OK},
+  };
+  for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+    reset_fakes();
+    g_account_delete_result = cases[i].service_result;
+    CHECK(run_input("1\nadmin\nAdmin1234\n4\nold") == cases[i].cli_result);
+    CHECK(g_delete_calls == 1);
+    CHECK(strcmp(g_deleted_username, "old") == 0);
+  }
+}
+
+static void test_final_output() {
+  reset_fakes();
+  begin_capture();
+  CHECK(run_input("0\n") == APP_OK);
+  char *output = load_capture();
+  CHECK(contains(output, "程序退出。"));
+  free(output);
+
+  // 显式退出和 EOF 都可能在最后一次提示之后输出消息。
+  const char *scripts[] = {"0\n", "x"};
+  for (size_t i = 0; i < sizeof scripts / sizeof scripts[0]; i++) {
+    reset_fakes();
+    begin_capture();
+    g_fail_output_on_read = true;
+    CHECK(run_input(scripts[i]) == APP_ERR_IO);
+    CHECK(ferror(stdout) != 0);
+  }
+}
+
 static void test_format_amount() {
   char buffer[32];
   CHECK(format_amount(0, buffer, sizeof buffer));
@@ -672,17 +749,20 @@ int main() {
 
   test_format_amount();
   test_bootstrap_and_admin_login();
+  test_bootstrap_retries_overlong_fields();
   test_admin_menu();
   test_card_user_menu();
   test_clerk_menu();
   test_admin_create_card_user();
   test_login_failure_and_input_errors();
   test_bootstrap_storage_error();
+  test_final_argument_at_eof();
   test_immediate_eof();
 
   char *output = load_capture();
   CHECK(output != nullptr);
   test_rendered_output(output);
+  test_final_output();
 
   if (g_failures == 0) {
     fprintf(stderr, "test_cli_menu: %zu checks passed\n", g_checks);

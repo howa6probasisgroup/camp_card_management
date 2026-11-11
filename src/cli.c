@@ -389,23 +389,25 @@ static AppResult run_bootstrap(CliInput *input) {
          PASSWORD_MIN_BYTES, PASSWORD_MAX_BYTES);
 
   char username[USERNAME_MAX_BYTES + 1] = {0};
-  char password[PASSWORD_MAX_BYTES + 1] = {0};
-  char confirm[PASSWORD_MAX_BYTES + 1] = {0};
-  AppResult result = APP_OK;
+  char password[PASSWORD_MAX_BYTES + 1];
+  char confirm[PASSWORD_MAX_BYTES + 1];
+  AppResult result;
 
   for (;;) {
+    secure_clear(password, sizeof password);
+    secure_clear(confirm, sizeof confirm);
+
     CliInputStatus status =
         prompt_line(input, "管理员用户名：", username, sizeof username);
-    if (status != CLI_INPUT_OK) {
-      result = status == CLI_INPUT_IO ? APP_ERR_IO : APP_OK;
-      break;
+    if (status == CLI_INPUT_OK) {
+      status = prompt_line(input, "密码：", password, sizeof password);
     }
-    status = prompt_line(input, "密码：", password, sizeof password);
-    if (status != CLI_INPUT_OK) {
-      result = status == CLI_INPUT_IO ? APP_ERR_IO : APP_OK;
-      break;
+    if (status == CLI_INPUT_OK) {
+      status = prompt_line(input, "确认密码：", confirm, sizeof confirm);
     }
-    status = prompt_line(input, "确认密码：", confirm, sizeof confirm);
+    if (status == CLI_INPUT_TOO_LONG && !input->eof) {
+      continue;
+    }
     if (status != CLI_INPUT_OK) {
       result = status == CLI_INPUT_IO ? APP_ERR_IO : APP_OK;
       break;
@@ -413,8 +415,6 @@ static AppResult run_bootstrap(CliInput *input) {
 
     if (strcmp(password, confirm) != 0) {
       printf("两次输入的密码不一致，请重新输入。\n");
-      secure_clear(password, sizeof password);
-      secure_clear(confirm, sizeof confirm);
       continue;
     }
 
@@ -432,8 +432,6 @@ static AppResult run_bootstrap(CliInput *input) {
     if (result_is_fatal(result)) {
       break;
     }
-    secure_clear(password, sizeof password);
-    secure_clear(confirm, sizeof confirm);
   }
 
   secure_clear(password, sizeof password);
@@ -545,7 +543,7 @@ cleanup:
 static AppResult handle_admin_get(CliInput *input, const Account *actor) {
   char username[USERNAME_MAX_BYTES + 1] = {0};
   Account fetched = {0};
-  AppResult result = APP_OK;
+  AppResult result;
 
   ASK_OR_FINISH(input, "要查询的用户名：", username);
   result = account_get(actor, username, &fetched);
@@ -586,7 +584,7 @@ static AppResult handle_admin_list(const Account *actor) {
 
 static AppResult handle_admin_delete(CliInput *input, const Account *actor) {
   char username[USERNAME_MAX_BYTES + 1] = {0};
-  AppResult result = APP_OK;
+  AppResult result;
 
   ASK_OR_FINISH(input, "要删除的用户名：", username);
   result = account_delete(actor, username);
@@ -646,7 +644,7 @@ static AppResult handle_card_self(const Account *actor) {
 
 static AppResult handle_card_phone(CliInput *input, const Account *actor) {
   char phone[PHONE_MAX_BYTES + 1] = {0};
-  AppResult result = APP_OK;
+  AppResult result;
 
   ASK_OR_FINISH(input, "新电话（可留空）：", phone);
   result = card_update_own_phone(actor, phone);
@@ -664,7 +662,7 @@ cleanup:
 static AppResult handle_card_amount(CliInput *input, const Account *actor,
                                     const bool recharge) {
   char text[64] = {0};
-  AppResult result = APP_OK;
+  AppResult result;
 
   ASK_OR_FINISH(input, recharge ? "充值金额（元）：" : "消费金额（元）：",
                 text);
@@ -699,7 +697,7 @@ cleanup:
 
 static AppResult handle_clerk_issue(CliInput *input, const Account *actor) {
   StudentProfileInput profile = {0};
-  AppResult result = APP_OK;
+  AppResult result;
 
   ASK_OR_FINISH(input, "学号：", profile.student_id);
   ASK_OR_FINISH(input, "姓名：", profile.name);
@@ -723,7 +721,7 @@ cleanup:
 static AppResult handle_clerk_get_by_id(CliInput *input, const Account *actor) {
   char student_id[STUDENT_ID_LENGTH + 1] = {0};
   StudentCardRecord record = {0};
-  AppResult result = APP_OK;
+  AppResult result;
 
   ASK_OR_FINISH(input, "学号：", student_id);
   result = card_get_by_id(actor, student_id, &record);
@@ -743,7 +741,7 @@ static AppResult handle_clerk_get_by_name(CliInput *input,
   char name[NAME_MAX_BYTES + 1] = {0};
   StudentList list;
   student_list_init(&list);
-  AppResult result = APP_OK;
+  AppResult result;
 
   ASK_OR_FINISH(input, "姓名：", name);
   result = card_find_by_name(actor, name, &list);
@@ -772,7 +770,7 @@ cleanup:
 static AppResult handle_clerk_status(CliInput *input, const Account *actor,
                                      const CardStatus status) {
   char student_id[STUDENT_ID_LENGTH + 1] = {0};
-  AppResult result = APP_OK;
+  AppResult result;
 
   ASK_OR_FINISH(input, "学号：", student_id);
   result = card_set_status(actor, student_id, status);
@@ -934,18 +932,18 @@ static AppResult run_role_menu(CliInput *input, const Account *actor) {
     if (input->io_error) {
       return APP_ERR_IO;
     }
-    if (input->eof) {
-      return APP_OK;
-    }
     if (result_is_fatal(result)) {
       return result;
+    }
+    if (input->eof) {
+      return APP_OK;
     }
   }
 }
 
-// 未登录菜单：登录后进入角色菜单，退出登录后回到本菜单。选择 0 通过
-// exit_app 通知最外层结束程序。
-static AppResult run_start_menu(CliInput *input, bool *exit_app) {
+// 未登录菜单：登录后进入角色菜单，退出登录后回到本菜单。选择 0 或遇到 EOF
+// 时结束。
+static AppResult run_start_menu(CliInput *input) {
   for (;;) {
     if (input->io_error) {
       return APP_ERR_IO;
@@ -971,7 +969,6 @@ static AppResult run_start_menu(CliInput *input, bool *exit_app) {
     }
     if (choice == 0) {
       printf("程序退出。\n");
-      *exit_app = true;
       return APP_OK;
     }
     if (choice != 1) {
@@ -1024,24 +1021,9 @@ AppResult cli_run() {
     }
   }
 
-  for (;;) {
-    if (input.io_error) {
-      return APP_ERR_IO;
-    }
-    if (input.eof) {
-      return APP_OK;
-    }
-
-    bool exit_app = false;
-    result = run_start_menu(&input, &exit_app);
-    if (result != APP_OK) {
-      return result;
-    }
-    if (exit_app || input.eof) {
-      return APP_OK;
-    }
-    if (input.io_error) {
-      return APP_ERR_IO;
-    }
+  result = run_start_menu(&input);
+  if (result == APP_OK && (fflush(stdout) == EOF || ferror(stdout))) {
+    return APP_ERR_IO;
   }
+  return result;
 }

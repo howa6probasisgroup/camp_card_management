@@ -1,6 +1,5 @@
 #include "cli.h"
 
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -51,12 +50,10 @@ static void expect_parse(const char *text, const AppResult expected,
 static void test_null_arguments() {
   // 空指针参数返回 INVALID_ARGUMENT。
   CHECK(cli_parse_amount(nullptr, nullptr) == APP_ERR_INVALID_ARGUMENT);
-  CHECK(cli_parse_amount(nullptr, &(int64_t){0}) == APP_ERR_INVALID_ARGUMENT);
-  {
-    int64_t cents = 0;
-    CHECK(cli_parse_amount("100", nullptr) == APP_ERR_INVALID_ARGUMENT);
-    CHECK(cents == 0); // 输出保持不变
-  }
+  int64_t cents = 42;
+  CHECK(cli_parse_amount(nullptr, &cents) == APP_ERR_INVALID_ARGUMENT);
+  CHECK(cents == 42); // 输出保持不变
+  CHECK(cli_parse_amount("100", nullptr) == APP_ERR_INVALID_ARGUMENT);
 }
 
 static void test_empty_and_non_numeric() {

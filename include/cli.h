@@ -12,7 +12,7 @@
  *          退出登录清除本地会话。业务错误提示后留在菜单，不泄露路径/凭据。 输入/输出流故障 `APP_ERR_IO`，分配失败 `APP_ERR_NO_MEMORY`。
  * @return `APP_OK` 表示正常退出（包括 EOF）；输入输出故障返回 `APP_ERR_IO`，分配失败返回 `APP_ERR_NO_MEMORY`。
  */
-AppResult cli_run(void);
+AppResult cli_run();
 /**
  * @brief 金额解析：只接受 ASCII 数字及可选小数点后 1..2 位数字， 至少一位整数；
  * @details 无空白/正负号/指数/逗号，接受 0，溢出 `APP_ERR_INVALID_ARGUMENT`。 整数输入按元换算为分（例如 `1` 表示 100 分），带小数点时最多两位小数。
