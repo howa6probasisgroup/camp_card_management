@@ -4,12 +4,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef CAMP_CARD_BACKEND_READY
 /**
  * @brief 正式数据目录名。
  * @details 路径相对于启动工作目录；测试通过各自临时目录调用存储接口，入口
  *          只使用该目录。
  */
-#ifdef CAMP_CARD_BACKEND_READY
 static const char DATA_DIRECTORY[] = "data";
 
 /**
@@ -44,7 +44,7 @@ int main() {
  * @return 始终返回 `EXIT_FAILURE`。
  */
 int main() {
-  fputs("存储与服务实现尚未接入，无法启动。\n", stderr);
+  fputs("真实存储实现尚未接入，无法启动。\n", stderr);
   return EXIT_FAILURE;
 }
 #endif
