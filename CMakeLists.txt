@@ -17,28 +17,39 @@ add_library(camp_card_core STATIC
 target_include_directories(camp_card_core PUBLIC include)
 target_link_libraries(camp_card_core PUBLIC yyjson::yyjson OpenSSL::Crypto)
 
+add_library(camp_card_services STATIC
+    src/services/account_service.c
+    src/services/auth_service.c
+    src/services/card_service.c
+    src/services/service_helpers.c
+)
+target_link_libraries(camp_card_services PUBLIC camp_card_core)
+
 add_executable(camp_card_management main.c)
 target_link_libraries(camp_card_management PRIVATE camp_card_core)
 
-# CLI 库先独立编译，便于在业务服务与入口接入前检查菜单代码。静态库允许
-# 保留对服务接口的未解析引用；待服务实现进入 camp_card_core 后再链接入口。
+# CLI 库独立编译，便于分别检查菜单代码和业务服务。静态库允许保留对
+# 真实存储接口的未解析引用，待存储实现接入后再链接正式入口。
 add_library(camp_card_cli STATIC
     src/cli.c
 )
 target_link_libraries(camp_card_cli PUBLIC camp_card_core)
 
-# 存储与服务实现尚未进入本仓库时，入口仍然编译，但明确提示无法启动，
-# 不伪造业务成功。实现接入 camp_card_core 后开启该选项即可链接正式入口。
-option(CAMP_CARD_BACKEND_READY "存储与服务实现已接入，可链接正式入口" OFF)
+# 真实存储实现尚未进入本仓库时，入口仍然编译，但明确提示无法启动，
+# 不伪造业务成功。存储实现接入 camp_card_core 后开启该选项即可链接正式入口。
+option(CAMP_CARD_BACKEND_READY "真实存储实现已接入，可链接正式入口" OFF)
 if (CAMP_CARD_BACKEND_READY)
     target_compile_definitions(camp_card_management PRIVATE CAMP_CARD_BACKEND_READY)
-    target_link_libraries(camp_card_management PRIVATE camp_card_cli)
+    target_link_libraries(
+        camp_card_management PRIVATE camp_card_cli camp_card_services
+    )
 else ()
-    message(STATUS "存储与服务实现未接入：正式入口只提示不可用")
+    message(STATUS "真实存储实现未接入：正式入口只提示不可用")
 endif ()
 
 if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(camp_card_core PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(camp_card_services PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(camp_card_management PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(camp_card_cli PRIVATE -Wall -Wextra -Wpedantic)
 endif ()
@@ -85,4 +96,43 @@ if (BUILD_TESTING)
         target_compile_options(test_cli_menu PRIVATE -Wall -Wextra -Wpedantic)
     endif ()
     add_test(NAME cli_menu COMMAND test_cli_menu)
+
+    add_executable(
+        test_auth_service
+        tests/test_auth_service.c
+        tests/service_test_support.c
+    )
+    target_link_libraries(test_auth_service PRIVATE camp_card_services)
+    if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(
+            test_auth_service PRIVATE -Wall -Wextra -Wpedantic
+        )
+    endif ()
+    add_test(NAME auth_service COMMAND test_auth_service)
+
+    add_executable(
+        test_account_service
+        tests/test_account_service.c
+        tests/service_test_support.c
+    )
+    target_link_libraries(test_account_service PRIVATE camp_card_services)
+    if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(
+            test_account_service PRIVATE -Wall -Wextra -Wpedantic
+        )
+    endif ()
+    add_test(NAME account_service COMMAND test_account_service)
+
+    add_executable(
+        test_card_service
+        tests/test_card_service.c
+        tests/service_test_support.c
+    )
+    target_link_libraries(test_card_service PRIVATE camp_card_services)
+    if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(
+            test_card_service PRIVATE -Wall -Wextra -Wpedantic
+        )
+    endif ()
+    add_test(NAME card_service COMMAND test_card_service)
 endif ()

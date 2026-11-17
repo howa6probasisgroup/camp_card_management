@@ -4,7 +4,7 @@
 
 小组成员维护各自的开发分支，通过 PR 提交代码；具体流程见 [小组协作约定](CONTRIBUTING.md)。
 
-各成员任务：[成员 A](docs/tasks/a.md)、[成员 B](docs/tasks/b.md)、[成员 C](docs/tasks/c.md)。CLI 菜单、权限矩阵和业务场景见 [菜单与业务场景](docs/menu.md)。
+各成员任务：[成员 A](docs/tasks/a.md)、[成员 B](docs/tasks/b.md)、[成员 C](docs/tasks/c.md)。CLI 菜单、权限矩阵和业务场景见 [菜单与业务场景](docs/menu.md)，业务规则、测试方法和交接要求见 [业务服务实现与测试](docs/services.md)。
 
 ## 依赖
 
@@ -39,7 +39,7 @@ ctest --test-dir build --output-on-failure
 
 首次配置由 vcpkg 根据清单准备依赖，需要网络和正常工具缓存的访问权限。使用全新的构建目录；旧目录若缓存了关闭的清单模式，使用 CMake 的 `--fresh` 重新配置。依赖安装完成不代表业务功能已经实现。
 
-存储与服务实现尚未接入时，正式入口只提示无法启动，不返回伪造的业务结果。实现加入 `camp_card_core` 后，配置时增加 `-DCAMP_CARD_BACKEND_READY=ON` 重新生成，入口会按 `storage_init`、`cli_run`、`storage_shutdown` 的顺序管理生命周期。
+CLI 与业务服务已经独立编译；真实文件存储尚未接入时，正式入口只提示无法启动，不返回伪造的业务结果。存储实现加入 `camp_card_core` 后，配置时增加 `-DCAMP_CARD_BACKEND_READY=ON` 重新生成，入口会按 `storage_init`、`cli_run`、`storage_shutdown` 的顺序管理生命周期。
 
 ## 基本契约
 

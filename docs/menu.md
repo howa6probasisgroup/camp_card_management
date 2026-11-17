@@ -170,4 +170,4 @@
 
 - 与成员 B 核对：本文件所列服务接口、角色限制和错误码是否与 [auth_service.h](../include/services/auth_service.h)、[account_service.h](../include/services/account_service.h)、[card_service.h](../include/services/card_service.h) 的实现一致。
 - 与成员 A 核对：启动工作目录下的 `data` 目录、测试用独立临时目录和损坏文件的错误传播方式。
-- 服务实现尚未接入时，菜单代码可以作为草稿 PR 编译和做界面测试，但不把返回固定成功的占位实现当作已完成业务。
+- 业务服务已实现并可使用测试替身验证界面调用；真实存储尚未接入时，正式入口明确提示无法启动，不使用固定成功的占位实现冒充完整系统。

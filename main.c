@@ -31,9 +31,9 @@ int main() {
   return EXIT_SUCCESS;
 }
 #else
-// 存储和服务实现尚未接入时，入口不返回成功，也不伪造业务结果。
+// 真实存储实现尚未接入时，入口不返回成功，也不伪造业务结果。
 int main() {
-  fputs("存储与服务实现尚未接入，无法启动。\n", stderr);
+  fputs("真实存储实现尚未接入，无法启动。\n", stderr);
   return EXIT_FAILURE;
 }
 #endif
