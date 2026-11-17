@@ -1,8 +1,12 @@
 #ifndef CAMP_CARD_STORAGE_TEST_SUPPORT_H
 #define CAMP_CARD_STORAGE_TEST_SUPPORT_H
 #ifndef _WIN32
+// POSIX 规定的功能开关名称，不能重命名。
+// NOLINTNEXTLINE(bugprone-reserved-identifier)
 #define _POSIX_C_SOURCE 200809L
 #ifdef __APPLE__
+// macOS 规定的功能开关名称，不能重命名。
+// NOLINTNEXTLINE(bugprone-reserved-identifier)
 #define _DARWIN_C_SOURCE
 #endif
 #endif
@@ -32,9 +36,9 @@ static inline void test_temp_dir(char *out, size_t capacity) {
   REQUIRE(n && n < MAX_PATH);
   REQUIRE(GetTempFileNameW(base, L"ccm", 0, path));
   REQUIRE(DeleteFileW(path));
-  REQUIRE(CreateDirectoryW(path, NULL));
+  REQUIRE(CreateDirectoryW(path, nullptr));
   REQUIRE(WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, path, -1, out,
-                              (int)capacity, NULL, NULL));
+                              (int)capacity, nullptr, nullptr));
 #else
   REQUIRE(capacity > sizeof("/tmp/camp-card-test-XXXXXX"));
   strcpy(out, "/tmp/camp-card-test-XXXXXX");

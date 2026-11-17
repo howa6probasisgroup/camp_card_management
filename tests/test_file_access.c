@@ -4,7 +4,7 @@
 #endif
 static AppResult count_entry(const char *name, FileAccessKind kind,
                              void *context) {
-  REQUIRE(strcmp(name, ".") && strcmp(name, ".."));
+  REQUIRE(strcmp(name, ".") != 0 && strcmp(name, "..") != 0);
   REQUIRE(!strchr(name, '/'));
   REQUIRE(kind == FILE_ACCESS_REGULAR || kind == FILE_ACCESS_DIRECTORY ||
           kind == FILE_ACCESS_OTHER);
@@ -18,7 +18,7 @@ static AppResult stop_entry(const char *name, FileAccessKind kind,
   (*(size_t *)context)++;
   return APP_ERR_INVALID_DATA;
 }
-int main(void) {
+int main() {
   char root[4096], path[4096], nested[4096];
   test_temp_dir(root, sizeof(root));
   test_path(root, "中文目录/a/b", nested, sizeof(nested));
@@ -28,8 +28,8 @@ int main(void) {
   REQUIRE(file_access_kind(nested, &kind) == APP_OK &&
           kind == FILE_ACCESS_DIRECTORY);
   REQUIRE(file_access_join(nested, "空文件", path, sizeof(path)) == APP_OK);
-  REQUIRE(file_access_write(path, NULL, 0) == APP_OK);
-  char *data = NULL;
+  REQUIRE(file_access_write(path, nullptr, 0) == APP_OK);
+  char *data = nullptr;
   size_t size = 99;
   REQUIRE(file_access_read(path, &data, &size) == APP_OK && size == 0 &&
           data[0] == '\0');
@@ -71,7 +71,7 @@ int main(void) {
   /* POSIX 目录可包含 Windows 不合法的名称；枚举仍须把名字交给调用方。 */
   char odd[4096];
   test_path(nested, "odd:entry", odd, sizeof(odd));
-  REQUIRE(file_access_write(odd, NULL, 0) == APP_OK);
+  REQUIRE(file_access_write(odd, nullptr, 0) == APP_OK);
   count = 0;
   REQUIRE(file_access_visit_directory(nested, count_entry, &count) == APP_OK &&
           count == 2);
@@ -99,12 +99,12 @@ int main(void) {
           kind == FILE_ACCESS_OTHER);
   REQUIRE(file_access_visit_directory(path, count_entry, &count) ==
           APP_ERR_NOT_FOUND);
-  REQUIRE(file_access_read(NULL, &data, &size) == APP_ERR_INVALID_ARGUMENT);
-  REQUIRE(file_access_write(path, NULL, 1) == APP_ERR_INVALID_ARGUMENT);
-  REQUIRE(file_access_kind(root, NULL) == APP_ERR_INVALID_ARGUMENT);
-  REQUIRE(file_access_visit_directory(root, NULL, NULL) ==
+  REQUIRE(file_access_read(nullptr, &data, &size) == APP_ERR_INVALID_ARGUMENT);
+  REQUIRE(file_access_write(path, nullptr, 1) == APP_ERR_INVALID_ARGUMENT);
+  REQUIRE(file_access_kind(root, nullptr) == APP_ERR_INVALID_ARGUMENT);
+  REQUIRE(file_access_visit_directory(root, nullptr, nullptr) ==
           APP_ERR_INVALID_ARGUMENT);
-  file_access_free(NULL);
+  file_access_free(nullptr);
   test_remove_tree(root);
   puts("test_file_access: passed");
   return 0;

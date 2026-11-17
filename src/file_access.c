@@ -1,4 +1,6 @@
 #ifndef _WIN32
+// POSIX 规定的功能开关名称，不能重命名。
+// NOLINTNEXTLINE(bugprone-reserved-identifier)
 #define _POSIX_C_SOURCE 200809L
 #endif
 #include "file_access.h"
@@ -28,7 +30,8 @@ static bool separator(char c) {
 #ifdef _WIN32
 /* 公共路径统一为 UTF-8，Windows 文件接口使用 UTF-16。 */
 static AppResult wide_path(const char *path, wchar_t **out) {
-  int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, NULL, 0);
+  int n =
+      MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, nullptr, 0);
   if (!n)
     return APP_ERR_INVALID_ARGUMENT;
   wchar_t *s = malloc((size_t)n * sizeof(*s));
@@ -89,7 +92,7 @@ static AppResult make_one(const char *path) {
   r = wide_path(path, &wide);
   if (r != APP_OK)
     return r;
-  bool ok = CreateDirectoryW(wide, NULL) != 0;
+  bool ok = CreateDirectoryW(wide, nullptr) != 0;
   free(wide);
 #else
   bool ok = mkdir(path, 0700) == 0;
@@ -179,7 +182,7 @@ AppResult file_access_visit_directory(const char *path,
   if (!pattern)
     return APP_ERR_NO_MEMORY;
   r = file_access_join(path, "*", pattern, n);
-  wchar_t *wide = NULL;
+  wchar_t *wide = nullptr;
   if (r == APP_OK)
     r = wide_path(pattern, &wide);
   free(pattern);
@@ -193,8 +196,9 @@ AppResult file_access_visit_directory(const char *path,
   do {
     if (!wcscmp(entry.cFileName, L".") || !wcscmp(entry.cFileName, L".."))
       continue;
-    int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
-                                    entry.cFileName, -1, NULL, 0, NULL, NULL);
+    int bytes =
+        WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, entry.cFileName, -1,
+                            nullptr, 0, nullptr, nullptr);
     if (!bytes) {
       r = APP_ERR_IO;
       break;
@@ -205,7 +209,7 @@ AppResult file_access_visit_directory(const char *path,
       break;
     }
     if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, entry.cFileName, -1,
-                             name, bytes, NULL, NULL)) {
+                             name, bytes, nullptr, nullptr)) {
       free(name);
       r = APP_ERR_IO;
       break;

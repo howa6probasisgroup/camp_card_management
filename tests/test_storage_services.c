@@ -5,7 +5,7 @@
 #include "storage_test_support.h"
 
 /* 链接真实文件存储与密码模块，覆盖跨模块调用和关闭后重新读取。 */
-int main(void) {
+int main() {
   char root[4096], path[4096];
   test_temp_dir(root, sizeof(root));
   REQUIRE(storage_init(root) == APP_OK);
@@ -52,7 +52,7 @@ int main(void) {
   REQUIRE(card_get_by_id(&user, profile.student_id, &record) == APP_OK);
   REQUIRE(record.balance_cents == 8750 && record.status == CARD_STATUS_FROZEN &&
           !strcmp(record.phone, "123-456"));
-  StudentList found = {0};
+  StudentList found = {};
   REQUIRE(card_find_by_name(&clerk, profile.name, &found) == APP_OK &&
           found.size == 1);
   student_list_clear(&found);
@@ -62,6 +62,15 @@ int main(void) {
   REQUIRE(account_delete(&admin, "student") == APP_OK);
   REQUIRE(storage_record_load(profile.student_id, &record) == APP_OK &&
           record.balance_cents == 0);
+  /* 管理员不能用另一个用户名的文件名别名绕过“禁止删除自己”。 */
+  REQUIRE(account_create(&admin, "aaa", "demo-pass-123", ROLE_ADMIN, "") ==
+          APP_OK);
+  Account alias_admin;
+  REQUIRE(auth_login("aaa", "demo-pass-123", &alias_admin) == APP_OK);
+  AppResult alias_delete = account_delete(&alias_admin, "aaG");
+  REQUIRE(alias_delete == APP_ERR_INVALID_DATA ||
+          alias_delete == APP_ERR_NOT_FOUND);
+  REQUIRE(auth_login("aaa", "demo-pass-123", &alias_admin) == APP_OK);
   test_path(root, "accounts/YWRtaW4.json", path, sizeof(path));
   REQUIRE(file_access_write(path, "{}", 2) == APP_OK);
   needed = false;

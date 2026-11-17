@@ -5,7 +5,7 @@
 #include <sys/stat.h>
 #endif
 
-static Account account(void) {
+static Account account() {
   Account a = {.username = "student001",
                .role = ROLE_CARD_USER,
                .student_id = "251543201"};
@@ -13,7 +13,7 @@ static Account account(void) {
   memset(a.password_hash_hex, 'b', PASSWORD_HASH_HEX_LENGTH);
   return a;
 }
-static StudentCardRecord record(void) {
+static StudentCardRecord record() {
   return (StudentCardRecord){.student_id = "251543201",
                              .name = "张三",
                              .sex = "男",
@@ -72,11 +72,13 @@ static void invalid_record_cases(const char *path,
                           {"{", "\xef\xbb\xbf{"}};
   for (size_t i = 0; i < sizeof(bad) / sizeof(*bad); i++) {
     replace_file(path, original, bad[i][0], bad[i][1]);
-    StudentCardRecord out = *valid, before = out;
+    StudentCardRecord out = *valid;
+    unsigned char before[sizeof(out)];
+    memcpy(before, &out, sizeof(out));
     REQUIRE(storage_record_load(valid->student_id, &out) ==
             APP_ERR_INVALID_DATA);
-    REQUIRE(!memcmp(&out, &before, sizeof(out)));
-    StudentList list = {0};
+    REQUIRE(!memcmp((const unsigned char *)&out, before, sizeof(out)));
+    StudentList list = {};
     REQUIRE(storage_record_list(&list) == APP_ERR_INVALID_DATA && !list.head &&
             !list.tail && !list.size);
   }
@@ -111,21 +113,68 @@ static void invalid_account_cases(const char *path, const Account *valid) {
                           {"{", "{\"role\":\"card_user\","}};
   for (size_t i = 0; i < sizeof(bad) / sizeof(*bad); i++) {
     replace_file(path, original, bad[i][0], bad[i][1]);
-    Account out = *valid, before = out;
+    Account out = *valid;
+    unsigned char before[sizeof(out)];
+    memcpy(before, &out, sizeof(out));
     REQUIRE(storage_account_load(valid->username, &out) ==
             APP_ERR_INVALID_DATA);
-    REQUIRE(!memcmp(&out, &before, sizeof(out)));
+    REQUIRE(!memcmp((const unsigned char *)&out, before, sizeof(out)));
     size_t count = 123;
     REQUIRE(storage_account_count(&count) == APP_ERR_INVALID_DATA &&
             count == 123);
-    AccountList list = {0};
+    AccountList list = {};
     REQUIRE(storage_account_list(&list) == APP_ERR_INVALID_DATA && !list.head &&
             !list.tail && !list.size);
   }
   REQUIRE(file_access_write(path, original, size) == APP_OK);
   free(original);
 }
-int main(void) {
+static void test_account_path_collision(const char *root) {
+  Account first = account(), second = account(), loaded;
+  strcpy(first.username, "aaa");
+  strcpy(second.username, "aaG");
+  REQUIRE(storage_account_save(&first) == APP_OK);
+  char alias[4096];
+  test_path(root, "accounts/YWFH.json", alias, sizeof(alias));
+  FileAccessKind kind;
+  AppResult lookup = file_access_kind(alias, &kind);
+  if (lookup == APP_OK) {
+    REQUIRE(kind == FILE_ACCESS_REGULAR);
+    REQUIRE(storage_account_load(second.username, &loaded) ==
+            APP_ERR_INVALID_DATA);
+    REQUIRE(storage_account_save(&second) == APP_ERR_INVALID_DATA);
+    REQUIRE(storage_account_delete(second.username) == APP_ERR_INVALID_DATA);
+    REQUIRE(storage_account_load(first.username, &loaded) == APP_OK);
+    REQUIRE(strcmp(loaded.username, first.username) == 0);
+  } else {
+    REQUIRE(lookup == APP_ERR_NOT_FOUND);
+    REQUIRE(storage_account_save(&second) == APP_OK);
+    REQUIRE(storage_account_delete(second.username) == APP_OK);
+    REQUIRE(storage_account_load(first.username, &loaded) == APP_OK);
+  }
+  REQUIRE(storage_account_delete(first.username) == APP_OK);
+  /* 在大小写敏感的文件系统上也验证路径与主键不一致时禁止覆盖和删除。 */
+  REQUIRE(storage_account_save(&first) == APP_OK);
+  char primary[4096];
+  test_path(root, "accounts/YWFh.json", primary, sizeof(primary));
+  char *bytes;
+  size_t size;
+  REQUIRE(file_access_read(primary, &bytes, &size) == APP_OK);
+  REQUIRE(file_access_write(alias, bytes, size) == APP_OK);
+  REQUIRE(storage_account_save(&second) == APP_ERR_INVALID_DATA);
+  REQUIRE(storage_account_delete(second.username) == APP_ERR_INVALID_DATA);
+  char *after;
+  size_t after_size;
+  REQUIRE(file_access_read(alias, &after, &after_size) == APP_OK);
+  REQUIRE(after_size == size && memcmp(bytes, after, size) == 0);
+  free(bytes);
+  free(after);
+  REQUIRE(file_access_remove(alias) == APP_OK);
+  if (file_access_kind(primary, &kind) == APP_OK)
+    REQUIRE(file_access_remove(primary) == APP_OK);
+}
+
+int main() {
   char root[4096], path[4096], account_file[4096], record_file[4096],
       index_file[4096];
   test_temp_dir(root, sizeof(root));
@@ -133,12 +182,13 @@ int main(void) {
   size_t count = 123;
   REQUIRE(storage_account_count(&count) == APP_ERR_INVALID_ARGUMENT &&
           count == 123);
-  REQUIRE(storage_init(NULL) == APP_ERR_INVALID_ARGUMENT);
+  REQUIRE(storage_init(nullptr) == APP_ERR_INVALID_ARGUMENT);
   REQUIRE(storage_init(root) == APP_OK);
   REQUIRE(storage_init(root) == APP_ERR_INVALID_ARGUMENT);
+  test_account_path_collision(root);
   REQUIRE(storage_account_count(&count) == APP_OK && count == 0);
-  StudentList students = {0};
-  AccountList accounts = {0};
+  StudentList students = {};
+  AccountList accounts = {};
   REQUIRE(storage_record_list(&students) == APP_OK && students.size == 0);
   REQUIRE(storage_record_find_by_name("无记录", &students) == APP_OK &&
           students.size == 0);
@@ -222,7 +272,7 @@ int main(void) {
   test_remove_directory(index_file);
   REQUIRE(storage_name_index_append(a.name, a.student_id) == APP_OK);
   test_path(root, "indexes/name/5b/yg/5L/iJ/invalid", path, sizeof(path));
-  REQUIRE(file_access_write(path, NULL, 0) == APP_OK);
+  REQUIRE(file_access_write(path, nullptr, 0) == APP_OK);
   REQUIRE(storage_record_find_by_name(a.name, &students) == APP_OK &&
           students.size == 1);
   student_list_clear(&students);
@@ -292,11 +342,11 @@ int main(void) {
   REQUIRE(storage_account_load("../escape", &loaded_user) ==
           APP_ERR_INVALID_ARGUMENT);
   REQUIRE(storage_record_load("12345678", &loaded) == APP_ERR_INVALID_ARGUMENT);
-  REQUIRE(storage_record_find_by_name(NULL, &students) ==
+  REQUIRE(storage_record_find_by_name(nullptr, &students) ==
           APP_ERR_INVALID_ARGUMENT);
-  REQUIRE(storage_account_count(NULL) == APP_ERR_INVALID_ARGUMENT);
-  REQUIRE(storage_account_save(NULL) == APP_ERR_INVALID_ARGUMENT);
-  REQUIRE(storage_record_save(NULL) == APP_ERR_INVALID_ARGUMENT);
+  REQUIRE(storage_account_count(nullptr) == APP_ERR_INVALID_ARGUMENT);
+  REQUIRE(storage_account_save(nullptr) == APP_ERR_INVALID_ARGUMENT);
+  REQUIRE(storage_record_save(nullptr) == APP_ERR_INVALID_ARGUMENT);
 #ifndef _WIN32
   if (geteuid() != 0) {
     REQUIRE(chmod(record_file, 0000) == 0);

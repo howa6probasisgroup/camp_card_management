@@ -97,8 +97,8 @@ static bool record_valid(const StudentCardRecord *r) {
       !text_valid(r->department, DEPARTMENT_MAX_BYTES, false) ||
       !text_valid(r->class_name, CLASS_NAME_MAX_BYTES, false) ||
       !text_valid(r->sex, SEX_MAX_BYTES, false) ||
-      (strcmp(r->sex, "男") && strcmp(r->sex, "女") &&
-       strcmp(r->sex, "其他")) ||
+      (strcmp(r->sex, "男") != 0 && strcmp(r->sex, "女") != 0 &&
+       strcmp(r->sex, "其他") != 0) ||
       bounded_length(r->phone, PHONE_MAX_BYTES) > PHONE_MAX_BYTES ||
       r->balance_cents < 0 ||
       (r->status != CARD_STATUS_ACTIVE && r->status != CARD_STATUS_FROZEN))
@@ -130,7 +130,7 @@ static void encode(const char *text, char *out) {
 static char *path_with_suffix(const char *root, const char *suffix) {
   size_t a = strlen(root), b = strlen(suffix);
   if (a > SIZE_MAX - b - 2)
-    return NULL;
+    return nullptr;
   char *p = malloc(a + b + 2);
   if (p)
     snprintf(p, a + b + 2, "%s/%s", root, suffix);
@@ -160,7 +160,7 @@ static char *name_path(const char *name) {
   suffix[k] = '\0';
   return path_with_suffix(names_dir, suffix);
 }
-static AppResult ready(void) {
+static AppResult ready() {
   if (!accounts_dir)
     return APP_ERR_INVALID_ARGUMENT;
   const char *dirs[] = {accounts_dir, students_dir, names_dir};
@@ -196,11 +196,11 @@ AppResult storage_init(const char *data_dir) {
   names_dir = n;
   return APP_OK;
 }
-AppResult storage_shutdown(void) {
+AppResult storage_shutdown() {
   free(accounts_dir);
   free(students_dir);
   free(names_dir);
-  accounts_dir = students_dir = names_dir = NULL;
+  accounts_dir = students_dir = names_dir = nullptr;
   return APP_OK;
 }
 
@@ -243,7 +243,7 @@ static AppResult read_document(const char *path, yyjson_doc **out) {
   if (r != APP_OK)
     return r;
   yyjson_read_err error;
-  yyjson_doc *doc = yyjson_read_opts(data, size, 0, NULL, &error);
+  yyjson_doc *doc = yyjson_read_opts(data, size, 0, nullptr, &error);
   file_access_free(data);
   if (!doc)
     return error.code == YYJSON_READ_ERROR_MEMORY_ALLOCATION
@@ -261,7 +261,7 @@ static AppResult account_read_path(const char *path, const char *username,
   yyjson_val *obj = yyjson_doc_get_root(doc);
   static const char *const fields[] = {"username", "password_salt",
                                        "password_hash", "role", "student_id"};
-  Account a = {0};
+  Account a = {};
   char role[16];
   bool ok = object_fields(obj, fields, 5) &&
             get_text(obj, "username", a.username, sizeof(a.username)) &&
@@ -307,7 +307,7 @@ static AppResult record_read_path(const char *path, const char *id,
   static const char *const fields[] = {"student_id",    "name",       "sex",
                                        "department",    "class_name", "phone",
                                        "balance_cents", "status"};
-  StudentCardRecord r = {0};
+  StudentCardRecord r = {};
   char status[16];
   bool ok = object_fields(obj, fields, 8) &&
             get_text(obj, "student_id", r.student_id, sizeof(r.student_id)) &&
@@ -354,7 +354,7 @@ static AppResult write_document(char *path, yyjson_mut_doc *doc,
   size_t size;
   yyjson_write_err error;
   char *data =
-      yyjson_mut_write_opts(doc, YYJSON_WRITE_PRETTY, NULL, &size, &error);
+      yyjson_mut_write_opts(doc, YYJSON_WRITE_PRETTY, nullptr, &size, &error);
   if (!data)
     return error.code == YYJSON_WRITE_ERROR_MEMORY_ALLOCATION
                ? APP_ERR_NO_MEMORY
@@ -378,7 +378,17 @@ AppResult storage_account_save(const Account *a) {
   if (r != APP_OK)
     return r;
   char *path = account_path(a->username);
-  yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+  if (!path)
+    return APP_ERR_NO_MEMORY;
+  /* Base64URL 大小写不同的文件名可能被文件系统视为同一路径。
+   * 覆盖前必须核对实际记录的用户名，不能截断另一账号的数据。 */
+  Account existing;
+  r = account_read_path(path, a->username, &existing);
+  if (r != APP_OK && r != APP_ERR_NOT_FOUND) {
+    free(path);
+    return r;
+  }
+  yyjson_mut_doc *doc = yyjson_mut_doc_new(nullptr);
   if (!path || !doc) {
     free(path);
     yyjson_mut_doc_free(doc);
@@ -404,7 +414,7 @@ AppResult storage_record_save(const StudentCardRecord *record) {
   if (r != APP_OK)
     return r;
   char *path = record_path(record->student_id);
-  yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+  yyjson_mut_doc *doc = yyjson_mut_doc_new(nullptr);
   if (!path || !doc) {
     free(path);
     yyjson_mut_doc_free(doc);
@@ -439,7 +449,11 @@ AppResult storage_account_delete(const char *username) {
   char *path = account_path(username);
   if (!path)
     return APP_ERR_NO_MEMORY;
-  r = file_access_remove(path);
+  /* 删除也必须验证实际主键，防止通过文件名大小写别名删除别人的账号。 */
+  Account existing;
+  r = account_read_path(path, username, &existing);
+  if (r == APP_OK)
+    r = file_access_remove(path);
   free(path);
   return r;
 }
@@ -447,7 +461,7 @@ AppResult storage_account_delete(const char *username) {
 /* 文件名必须是合法用户名的规范无填充编码，非规范条目不属于记录。 */
 static bool account_filename(const char *name, char *username) {
   size_t n = strlen(name);
-  if (n <= 5 || strcmp(name + n - 5, ".json"))
+  if (n <= 5 || strcmp(name + n - 5, ".json") != 0)
     return false;
   n -= 5;
   if (n > 4 * ((USERNAME_MAX_BYTES + 2) / 3) || n % 4 == 1)
@@ -500,7 +514,7 @@ AppResult storage_account_list(AccountList *out) {
 AppResult storage_account_count(size_t *out_count) {
   if (!out_count)
     return APP_ERR_INVALID_ARGUMENT;
-  AccountList list = {0};
+  AccountList list = {};
   AppResult r = storage_account_list(&list);
   if (r == APP_OK)
     *out_count = list.size;
@@ -520,13 +534,13 @@ static AppResult visit_record(const char *name, FileAccessKind kind,
   static const unsigned widths[] = {2, 2, 2, 1, 2};
   static const unsigned offsets[] = {0, 2, 4, 6, 7};
   unsigned width = widths[walk->depth], offset = offsets[walk->depth];
-  char part[3] = {0};
+  char part[3] = {};
   if (walk->depth < 4) {
     if (kind != FILE_ACCESS_DIRECTORY || !digits(name, width))
       return APP_OK;
   } else {
     if (kind != FILE_ACCESS_REGULAR || strlen(name) != 7 ||
-        strcmp(name + 2, ".json"))
+        strcmp(name + 2, ".json") != 0)
       return APP_OK;
   }
   memcpy(part, name, width);
@@ -555,7 +569,7 @@ AppResult storage_record_list(StudentList *out) {
   if (!out || out->head || out->tail || out->size)
     return APP_ERR_INVALID_ARGUMENT;
   AppResult r = ready();
-  RecordWalk walk = {.path = students_dir, .depth = 0, .id = {0}, .out = out};
+  RecordWalk walk = {.path = students_dir, .depth = 0, .id = {}, .out = out};
   if (r == APP_OK)
     r = file_access_visit_directory(students_dir, visit_record, &walk);
   if (r != APP_OK)
@@ -624,7 +638,7 @@ AppResult storage_name_index_append(const char *name, const char *id) {
     FileAccessKind kind;
     r = file_access_kind(path, &kind);
     if (r == APP_ERR_NOT_FOUND)
-      r = file_access_write(path, NULL, 0);
+      r = file_access_write(path, nullptr, 0);
     else if (r == APP_OK) {
       if (kind != FILE_ACCESS_REGULAR)
         r = APP_ERR_INVALID_DATA;
