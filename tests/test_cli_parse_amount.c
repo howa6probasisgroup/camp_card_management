@@ -3,14 +3,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// CLI 金额解析的独立测试。覆盖整数、一位与两位小数、零、非法字符、
-// 格式错误和范围边界；验证失败不改变输出，全程不引入浮点数。
-//
-// 解析契约（以 cli.h 为准）：
-//   只接受非负十进制整数，或最多两位小数的十进制数；
-//   不允许正负号、指数、逗号、空白或多余字符；
-//   至少一位整数；"." 之后须有 1..2 位数字；接受 0；
-//   溢出返回 INVALID_ARGUMENT；失败不改变 out_cents。
+/**
+ * @file test_cli_parse_amount.c
+ * @brief 验证 CLI 金额解析。
+ * @details 覆盖格式、范围边界和失败时不修改输出；金额全程使用整数分，
+ *          不引入浮点数。
+ */
 
 static size_t g_checks;
 static size_t g_failures;
@@ -26,10 +24,9 @@ static void check(const bool condition, const char *expression,
 
 #define CHECK(condition) check((condition), #condition, __LINE__)
 
-// 断言解析结果与期望分值一致，且失败时不改变输出。
 static void expect_parse(const char *text, const AppResult expected,
                          const int64_t expected_cents) {
-  int64_t cents = -1234567890; // 哨兵值，用于检测失败时输出被修改
+  int64_t cents = -1234567890;
   const AppResult result = cli_parse_amount(text, &cents);
   CHECK(result == expected);
   if (result == APP_OK) {
@@ -39,7 +36,6 @@ static void expect_parse(const char *text, const AppResult expected,
     }
     CHECK(cents == expected_cents);
   } else {
-    // 失败不得修改 out_cents。
     CHECK(cents == -1234567890);
   }
 }
@@ -48,11 +44,10 @@ static void expect_parse(const char *text, const AppResult expected,
   expect_parse((text), (expected), (cents))
 
 static void test_null_arguments() {
-  // 空指针参数返回 INVALID_ARGUMENT。
   CHECK(cli_parse_amount(nullptr, nullptr) == APP_ERR_INVALID_ARGUMENT);
   int64_t cents = 42;
   CHECK(cli_parse_amount(nullptr, &cents) == APP_ERR_INVALID_ARGUMENT);
-  CHECK(cents == 42); // 输出保持不变
+  CHECK(cents == 42);
   CHECK(cli_parse_amount("100", nullptr) == APP_ERR_INVALID_ARGUMENT);
 }
 
@@ -64,7 +59,6 @@ static void test_empty_and_non_numeric() {
 }
 
 static void test_signs_and_exponents() {
-  // 正负号、指数均非法。
   EXPECT_PARSE("+100", APP_ERR_INVALID_ARGUMENT, 0);
   EXPECT_PARSE("-100", APP_ERR_INVALID_ARGUMENT, 0);
   EXPECT_PARSE("-0", APP_ERR_INVALID_ARGUMENT, 0);
@@ -75,7 +69,6 @@ static void test_signs_and_exponents() {
 }
 
 static void test_whitespace_and_separators() {
-  // 前后空白、内部空格、逗号均非法。
   EXPECT_PARSE(" 100", APP_ERR_INVALID_ARGUMENT, 0);
   EXPECT_PARSE("100 ", APP_ERR_INVALID_ARGUMENT, 0);
   EXPECT_PARSE("1 00", APP_ERR_INVALID_ARGUMENT, 0);
@@ -86,7 +79,6 @@ static void test_whitespace_and_separators() {
 }
 
 static void test_integer_amounts() {
-  // 非负十进制整数：换算为分。
   EXPECT_PARSE("0", APP_OK, 0);
   EXPECT_PARSE("00", APP_OK, 0);
   EXPECT_PARSE("1", APP_OK, 100);
@@ -98,7 +90,6 @@ static void test_integer_amounts() {
 }
 
 static void test_decimal_amounts() {
-  // 一位与两位小数：换算为分。
   EXPECT_PARSE("0.1", APP_OK, 10);
   EXPECT_PARSE("0.12", APP_OK, 12);
   EXPECT_PARSE("0.0", APP_OK, 0);
@@ -111,10 +102,9 @@ static void test_decimal_amounts() {
 }
 
 static void test_decimal_format_errors() {
-  // "." 后必须紧跟数字；最多两位小数。
-  EXPECT_PARSE(".5", APP_ERR_INVALID_ARGUMENT, 0);    // 缺整数位
-  EXPECT_PARSE("1.", APP_ERR_INVALID_ARGUMENT, 0);    // 缺小数位
-  EXPECT_PARSE("1.234", APP_ERR_INVALID_ARGUMENT, 0); // 三位小数
+  EXPECT_PARSE(".5", APP_ERR_INVALID_ARGUMENT, 0);
+  EXPECT_PARSE("1.", APP_ERR_INVALID_ARGUMENT, 0);
+  EXPECT_PARSE("1.234", APP_ERR_INVALID_ARGUMENT, 0);
   EXPECT_PARSE("1.23.4", APP_ERR_INVALID_ARGUMENT, 0);
   EXPECT_PARSE("1.a", APP_ERR_INVALID_ARGUMENT, 0);
   EXPECT_PARSE("1.2a", APP_ERR_INVALID_ARGUMENT, 0);
@@ -123,22 +113,18 @@ static void test_decimal_format_errors() {
 }
 
 static void test_range_boundaries() {
-  // 边界值：INT64_MAX 的分值上限。整数输入按元换算为分，因此可接受的
-  // 最大整数是 92233720368547758 元（即 9223372036854775800 分）。
+  // 整数输入按元换算，因此恰好低于 int64_t 上限的文本仍可解析为分值。
   EXPECT_PARSE("92233720368547758.07", APP_OK, INT64_MAX);
   EXPECT_PARSE("92233720368547758", APP_OK, 9223372036854775800LL);
-  // 整数按元换算后超出 int64 上界：溢出。
   EXPECT_PARSE("92233720368547759", APP_ERR_INVALID_ARGUMENT, 0);
   EXPECT_PARSE("9223372036854775807", APP_ERR_INVALID_ARGUMENT, 0);
   EXPECT_PARSE("9223372036854775808", APP_ERR_INVALID_ARGUMENT, 0);
   EXPECT_PARSE("92233720368547758.08", APP_ERR_INVALID_ARGUMENT, 0);
   EXPECT_PARSE("92233720368547758070", APP_ERR_INVALID_ARGUMENT, 0);
-  // 多位数输入溢出被拒绝。
   EXPECT_PARSE("99999999999999999999999999", APP_ERR_INVALID_ARGUMENT, 0);
 }
 
 static void test_output_not_modified_on_failure() {
-  // 失败时 out_cents 必须保持不变。
   int64_t cents = 42;
   CHECK(cli_parse_amount("12.345", &cents) == APP_ERR_INVALID_ARGUMENT);
   CHECK(cents == 42);
@@ -147,7 +133,6 @@ static void test_output_not_modified_on_failure() {
   CHECK(cli_parse_amount("99999999999999999999999999", &cents) ==
         APP_ERR_INVALID_ARGUMENT);
   CHECK(cents == 42);
-  // 成功后输出更新为解析结果。
   CHECK(cli_parse_amount("5.5", &cents) == APP_OK);
   CHECK(cents == 550);
 }
