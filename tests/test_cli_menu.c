@@ -1,9 +1,9 @@
-// CLI 菜单与业务场景测试。通过包含 src/cli.c 替换输入函数，并用测试桩
-// 代替业务服务，验证三角色菜单的调用映射、会话流程、输入边界和展示内容。
-// 真实权限、余额与持久化规则由服务层测试覆盖，本测试不复制这些规则。
-//
-// 输出重定向到临时文件，用于检查账号摘要不包含盐或派生值、密码不会被界面
-// 主动打印。检查结果写到 stderr，避免与待检查的标准输出混在一起。
+/**
+ * @file test_cli_menu.c
+ * @brief 验证 CLI 菜单与业务场景。
+ * @details 覆盖菜单调用映射、会话流程、输入边界和显示内容；业务服务使用
+ *          测试桩，输出捕获用于确认摘要不泄露凭据。
+ */
 
 #include <stdint.h>
 #include <stdio.h>
@@ -29,7 +29,7 @@ static bool g_fail_output_on_read;
 static int cli_test_getchar() {
   if (g_fail_output_on_read) {
     g_fail_output_on_read = false;
-    // 最后一次提示已刷新，此后的输出写入会失败。
+    // 下一个提示刷新后把 stdout 改为只读，使后续输出写入失败。
     if (freopen("cli_menu_test_output.txt", "r", stdout) == nullptr) {
       fprintf(stderr, "test setup error: cannot make stdout read-only\n");
       exit(EXIT_FAILURE);
@@ -691,7 +691,7 @@ static void test_final_output() {
   CHECK(contains(output, "程序退出。"));
   free(output);
 
-  // 显式退出和 EOF 都可能在最后一次提示之后输出消息。
+  // 两种结束路径都可能在上一次提示刷新后继续输出消息。
   const char *scripts[] = {"0\n", "x"};
   for (size_t i = 0; i < sizeof scripts / sizeof scripts[0]; i++) {
     reset_fakes();
@@ -733,7 +733,7 @@ static void test_rendered_output(const char *output) {
   CHECK(contains(output, "输入过长，已忽略该行"));
   CHECK(contains(output, "用户名或密码错误"));
 
-  // 账号摘要不得输出盐、派生值和密码本身。
+  // 账号摘要不得包含凭据字段或明文密码。
   CHECK(!contains(output, "sentinel-salt"));
   CHECK(!contains(output, "sentinel-hash"));
   CHECK(!contains(output, "password_salt"));

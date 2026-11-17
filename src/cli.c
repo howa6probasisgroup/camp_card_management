@@ -13,21 +13,23 @@
 #include <windows.h>
 #endif
 
-// CLI 模块负责命令行输入输出、三角色菜单和程序会话串联。菜单只收集输入、
-// 调用业务服务并展示结果；权限、余额和卡状态规则由服务层执行。CLI 不直接
-// 调用存储函数、不读写 JSON，错误提示只依据返回码生成，避免泄露内部路径、
-// 密码盐、派生值或堆栈。
-//
-// 金额始终使用整数分：解析时不引入浮点数，展示固定两位小数。业务层负责
-// 拒绝零金额的充值与消费；本模块只负责把用户文本正确解析为分值并检查溢出。
+/**
+ * @file cli.c
+ * @brief 实现 CLI 输入输出、三角色菜单和会话流程。
+ * @details 权限与业务规则由服务层执行；金额使用整数分并检查溢出。提示只依据
+ *          返回码，不输出路径、凭据或内部状态。
+ */
 
-// 单行输入的最大缓冲区容量（字节）。足够容纳用户名、密码、姓名和金额等
-// 正常输入；超长输入由 cli_read_line 排空该行后提示，剩余字符不会被当作
-// 下一次选择。
+/**
+ * @brief 单行输入缓冲区容量。
+ * @details 同时限制单次输入；超长行会排空，避免残留字符成为下一次选择。
+ */
 enum { CLI_LINE_CAPACITY = 4096 };
 
-// 行输入内部结构：记录是否遇到 EOF、是否超长以及是否发生流故障，供调用方
-// 区分正常空行、超长行和输入流故障。
+/**
+ * @brief 单行输入的暂存状态。
+ * @details 记录是否遇到 EOF、超长行或输入流故障，供调用方区分失败原因。
+ */
 typedef struct {
   char buffer[CLI_LINE_CAPACITY];
   size_t length;
@@ -36,13 +38,19 @@ typedef struct {
   bool io_error;
 } CliLine;
 
-// 会话级输入状态。任一次读取遇到 EOF 或流故障后，菜单不再继续询问。
+/**
+ * @brief 会话级输入状态。
+ * @details 任一次读取遇到 EOF 或流故障后，菜单不再继续读取输入。
+ */
 typedef struct {
   bool eof;
   bool io_error;
 } CliInput;
 
-// 单次输入结果，区分正常、EOF、超长和流故障。EOF 不是错误。
+/**
+ * @brief 单次输入读取结果。
+ * @details EOF 表示正常结束；超长和输入流故障分别使用独立状态。
+ */
 typedef enum {
   CLI_INPUT_OK = 0,
   CLI_INPUT_EOF,
@@ -50,12 +58,22 @@ typedef enum {
   CLI_INPUT_IO
 } CliInputStatus;
 
-// 金额和菜单编号只接受 ASCII 数字，显式比较而不依赖当前 locale 的 isdigit。
+/**
+ * @brief 判断字符是否为 ASCII 数字。
+ * @details 显式比较，避免 locale 影响 `isdigit` 的结果。
+ * @param[in] value 待判断的字符。
+ * @return 字符位于 `0` 到 `9` 时返回 true，否则返回 false。
+ */
 static bool is_ascii_digit(const char value) {
   return value >= '0' && value <= '9';
 }
 
-// 清除密码等敏感缓冲区，使用 volatile 防止编译器把清零优化掉。
+/**
+ * @brief 清除敏感内存。
+ * @details 使用 `volatile` 写入，防止编译器把清零操作优化掉。
+ * @param[in,out] data 待清除的缓冲区。
+ * @param[in] size 缓冲区字节数。
+ */
 static void secure_clear(void *data, size_t size) {
   volatile unsigned char *cursor = data;
   while (size > 0) {
@@ -64,8 +82,12 @@ static void secure_clear(void *data, size_t size) {
   }
 }
 
-// 清空 stdin 当前行的剩余字符（含换行），避免超长输入的残留字符被当作
-// 下一次选择。排空过程中遇到 EOF 或流故障时记录状态。
+/**
+ * @brief 排空当前行剩余字符。
+ * @details 读取到换行或 EOF，避免超长输入残留内容被当作下一次选择，并记录
+ *          排空过程中遇到的 EOF 或流故障。
+ * @param[in,out] line 当前行的暂存状态。
+ */
 static void drain_current_line(CliLine *line) {
   int value;
   do {
@@ -80,10 +102,13 @@ static void drain_current_line(CliLine *line) {
   }
 }
 
-// 读取整行输入到内部缓冲区。自动去除末尾换行符与行尾回车符，保留 UTF-8
-// 原始字节不做编码转换。EOF 前若有未换行的内容，按一行正常处理。
-// 返回 false 表示没有可用输入（空输入遇到 EOF 或流故障）；此时调用方应
-// 停止读取，不再把残留内容当成选项。
+/**
+ * @brief 读取一行输入。
+ * @details 去掉行尾换行和 CRLF 中的回车，保留 UTF-8 原始字节；EOF 前已有
+ *          内容时仍返回该行。
+ * @param[out] line 接收行内容及读取状态。
+ * @return 有可用行时返回 true；空输入遇到 EOF 或流故障时返回 false。
+ */
 static bool cli_read_line(CliLine *line) {
   line->length = 0;
   line->too_long = false;
@@ -100,7 +125,7 @@ static bool cli_read_line(CliLine *line) {
   }
 
   if (value != '\n' && value != EOF) {
-    // 缓冲区已满且尚未读到行尾，说明输入超长，排空当前行。
+    // 缓冲区已满且尚未到行尾，需隔离本行剩余内容。
     line->too_long = true;
     drain_current_line(line);
   } else if (value == EOF) {
@@ -124,8 +149,11 @@ static bool cli_read_line(CliLine *line) {
   return true;
 }
 
-// Windows 控制台在读取输入前，将控制台代码页设置为 UTF-8，使 UTF-8 输入
-// 输出与文件存储保持一致。仅在 Windows 平台调用，macOS/POSIX 无此需求。
+/**
+ * @brief 配置 Windows 控制台编码。
+ * @details 将输入输出代码页固定为 UTF-8，避免与文件存储编码不一致；
+ *          非 Windows 平台不执行操作。
+ */
 static void configure_console_encoding() {
 #ifdef _WIN32
   SetConsoleOutputCP(CP_UTF8);
@@ -140,26 +168,24 @@ AppResult cli_parse_amount(const char *text, int64_t *out_cents) {
     return APP_ERR_INVALID_ARGUMENT;
   }
 
-  // 只接受非负十进制整数，或最多两位小数的十进制数。不允许正负号、指数、
-  // 逗号、空白或多余字符。输入必须至少有一位整数，可选的 "." 之后须有
-  // 1..2 位数字。允许解析零，由业务层拒绝零金额充值与消费。
+  // 至少一位 ASCII 整数，可带小数点后 1 到 2 位数字；不接受空白、正负号、
+  // 指数或逗号。允许解析零，零金额业务由服务层拒绝。
   const char *cursor = text;
   if (*cursor == '\0' || !is_ascii_digit(*cursor)) {
     return APP_ERR_INVALID_ARGUMENT;
   }
 
-  // 整数部分：累积到分值，检查溢出。用 uint64 累积以覆盖 int64 全范围。
+  // 先累积原始整数部分，无小数点时再按元换算为分。
   uint64_t cents = 0;
   while (is_ascii_digit(*cursor)) {
     const unsigned digit = (unsigned)(*cursor - '0');
     if (cents > (UINT64_MAX - digit) / 10) {
-      return APP_ERR_INVALID_ARGUMENT; // 转换溢出
+      return APP_ERR_INVALID_ARGUMENT;
     }
     cents = cents * 10 + digit;
     cursor++;
   }
 
-  // 小数部分：最多两位，换算为分。没有小数点时整数部分按元换算为分。
   if (*cursor == '.') {
     cursor++;
     unsigned fractional_digits = 0;
@@ -174,33 +200,30 @@ AppResult cli_parse_amount(const char *text, int64_t *out_cents) {
       cursor++;
     }
     if (fractional_digits == 0) {
-      return APP_ERR_INVALID_ARGUMENT; // "." 之后必须紧跟数字
+      return APP_ERR_INVALID_ARGUMENT;
     }
-    // 多于两位小数：非法格式。
     if (is_ascii_digit(*cursor)) {
       return APP_ERR_INVALID_ARGUMENT;
     }
     if (fractional_digits == 1) {
-      fraction *= 10; // 一位小数视为 X0 分
+      fraction *= 10;
     }
     if (cents > (UINT64_MAX - fraction) / 100) {
       return APP_ERR_INVALID_ARGUMENT;
     }
     cents = cents * 100 + fraction;
   } else {
-    // 整数输入表示元，例如 "1" 表示 1.00 元、即 100 分。
     if (cents > UINT64_MAX / 100) {
       return APP_ERR_INVALID_ARGUMENT;
     }
     cents *= 100;
   }
 
-  // 之后不允许出现任何字符（空白、符号、指数、逗号等均非法）。
   if (*cursor != '\0') {
     return APP_ERR_INVALID_ARGUMENT;
   }
 
-  // 分值不超过 int64 上界才写出；失败不改变 out_cents。
+  // 只有全部校验通过才写出，失败时保持调用方原值。
   if (cents > (uint64_t)INT64_MAX) {
     return APP_ERR_INVALID_ARGUMENT;
   }
@@ -208,8 +231,14 @@ AppResult cli_parse_amount(const char *text, int64_t *out_cents) {
   return APP_OK;
 }
 
-// 把整数分格式化为固定两位小数的元。返回值只表示缓冲区是否足够；余额由
-// 存储层保证非负，调用方不需要处理负数的业务含义。
+/**
+ * @brief 将整数分格式化为固定两位小数的元。
+ * @details 不使用浮点数；参数无效、金额为负或缓冲区不足时失败。
+ * @param[in] cents 待格式化的非负整数分金额。
+ * @param[out] out 接收格式化文本的缓冲区。
+ * @param[in] capacity 输出缓冲区容量。
+ * @return 格式化结果完整写入时返回 true，否则返回 false。
+ */
 static bool format_amount(const int64_t cents, char *out,
                           const size_t capacity) {
   if (out == nullptr || capacity == 0 || cents < 0) {
@@ -220,7 +249,11 @@ static bool format_amount(const int64_t cents, char *out,
   return written >= 0 && (size_t)written < capacity;
 }
 
-// 根据返回码生成用户可见提示。不得在这里附加路径、凭据或内部状态。
+/**
+ * @brief 输出用户可见的错误提示。
+ * @details 提示只依据返回码生成，不附加路径、凭据或内部状态。
+ * @param[in] result 服务或存储接口返回的结果码。
+ */
 static void print_error(const AppResult result) {
   const char *message;
   switch (result) {
@@ -266,8 +299,12 @@ static void print_error(const AppResult result) {
   }
 }
 
-// 读写失败、数据损坏和内存不足表示底层状态已不可继续使用；认证失败和业务
-// 校验失败只提示并留在菜单。
+/**
+ * @brief 判断错误是否终止当前流程。
+ * @details I/O 故障、数据损坏和内存不足不能继续；业务校验错误仍可留在菜单重试。
+ * @param[in] result 待判断的结果码。
+ * @return 应终止流程时返回 true，否则返回 false。
+ */
 static bool result_is_fatal(const AppResult result) {
   return result == APP_ERR_IO || result == APP_ERR_INVALID_DATA ||
          result == APP_ERR_NO_MEMORY;
@@ -297,7 +334,11 @@ static const char *status_text(const CardStatus status) {
   }
 }
 
-// 展示账号摘要。只显示用户名、角色和关联学号；盐与派生值不得输出。
+/**
+ * @brief 输出账号摘要。
+ * @details 只显示用户名、角色和关联学号，不输出盐、派生值或其他凭据。
+ * @param[in] account 待显示的账号记录。
+ */
 static void print_account(const Account *account) {
   printf("用户名：%s\n", account->username);
   printf("角色：%s\n", role_text(account->role));
@@ -308,7 +349,11 @@ static void print_account(const Account *account) {
   }
 }
 
-// 展示校园卡记录。余额由整数分格式化，不使用浮点数。
+/**
+ * @brief 输出校园卡记录。
+ * @details 余额由整数分格式化，不使用浮点数。
+ * @param[in] record 待显示的校园卡记录。
+ */
 static void print_card(const StudentCardRecord *record) {
   char balance[32];
   if (!format_amount(record->balance_cents, balance, sizeof balance)) {
@@ -324,8 +369,15 @@ static void print_card(const StudentCardRecord *record) {
   printf("状态：%s\n", status_text(record->status));
 }
 
-// 提示一行输入。超长输入已被排空，提示后由调用方返回菜单；EOF 与流故障
-// 只记录在会话状态中，由最外层流程决定退出。
+/**
+ * @brief 提示并读取一行输入。
+ * @details 超长输入已在该函数内排空并提示；EOF 与流故障记录到会话状态。
+ * @param[in,out] input 会话级输入状态。
+ * @param[in] label 输出给用户的提示文本。
+ * @param[out] out 接收读取内容的缓冲区。
+ * @param[in] capacity 输出缓冲区容量。
+ * @return 读取结果状态。
+ */
 static CliInputStatus prompt_line(CliInput *input, const char *label, char *out,
                                   const size_t capacity) {
   printf("%s", label);
@@ -363,8 +415,15 @@ static CliInputStatus prompt_line(CliInput *input, const char *label, char *out,
   return status;
 }
 
-// 读取单数字菜单编号。空行、多个字符和非数字都视为无效选择，返回 OK 并
-// 让调用方重新显示菜单。
+/**
+ * @brief 读取单数字菜单编号。
+ * @details 空行、多个字符和非数字都视为无效选择；无效选择返回
+ *          `CLI_INPUT_OK`，由调用方重新显示菜单。
+ * @param[in,out] input 会话级输入状态。
+ * @param[in] label 输出给用户的提示文本。
+ * @param[out] choice 接收菜单编号；无效选择时写入 `-1`。
+ * @return 读取结果状态。
+ */
 static CliInputStatus prompt_choice(CliInput *input, const char *label,
                                     int *choice) {
   char text[8] = {0};
@@ -381,8 +440,13 @@ static CliInputStatus prompt_choice(CliInput *input, const char *label,
   return CLI_INPUT_OK;
 }
 
-// 首轮管理员初始化。输入不合法时留在初始化流程重试；已有账号（并发创建）
-// 时提示直接登录。EOF 或流故障由调用方根据 CliInput 状态处理。
+/**
+ * @brief 执行首次管理员初始化。
+ * @details 输入不合法时留在初始化流程重试；账号已存在时提示直接登录。EOF
+ *          或流故障由调用方根据输入状态处理。
+ * @param[in,out] input 会话级输入状态。
+ * @return 初始化成功、可继续登录或正常结束时返回 `APP_OK`；致命错误原样返回。
+ */
 static AppResult run_bootstrap(CliInput *input) {
   printf("\n==== 首次启动：创建管理员 ====\n");
   printf("用户名 1-%d 字节；密码 %d-%d 字节。\n", USERNAME_MAX_BYTES,
@@ -439,7 +503,14 @@ static AppResult run_bootstrap(CliInput *input) {
   return result;
 }
 
-// 登录。认证失败只提示并回到未登录菜单；存储损坏等致命错误向上传播。
+/**
+ * @brief 执行登录。
+ * @details 认证失败只提示并回到未登录菜单；存储损坏等致命错误向上传播。
+ * @param[in,out] input 会话级输入状态。
+ * @param[out] session 成功时接收登录会话。
+ * @param[out] logged_in 接收是否登录成功。
+ * @return 未发生致命错误时返回 `APP_OK`，否则返回对应错误码。
+ */
 static AppResult run_login(CliInput *input, Account *session, bool *logged_in) {
   *logged_in = false;
   char username[USERNAME_MAX_BYTES + 1] = {0};
@@ -473,8 +544,14 @@ static AppResult run_login(CliInput *input, Account *session, bool *logged_in) {
   return APP_OK;
 }
 
-// 以下处理函数返回 APP_OK 表示已处理完（成功或可重试的业务错误），返回
-// 致命错误时由角色菜单结束流程。输入遇到 EOF 时由调用方检查会话状态。
+/**
+ * @brief 读取处理函数所需的字段。
+ * @details 输入失败时通过 `goto cleanup` 结束当前处理函数；返回 `APP_OK`
+ *          表示已处理完（成功或可重试的业务错误）。
+ * @param input 会话级输入状态。
+ * @param label 输出给用户的提示文本。
+ * @param buffer 接收输入内容的缓冲区。
+ */
 #define ASK_OR_FINISH(input, label, buffer)                                    \
   do {                                                                         \
     const CliInputStatus ask_status_ =                                         \
@@ -658,7 +735,14 @@ cleanup:
   return result;
 }
 
-// 充值或消费。金额先由 CLI 解析为整数分，零金额仍交给服务层拒绝。
+/**
+ * @brief 处理充值或消费。
+ * @details 金额先由 CLI 解析为整数分，零金额仍交给服务层拒绝。
+ * @param[in,out] input 会话级输入状态。
+ * @param[in] actor 当前登录的卡用户会话。
+ * @param[in] recharge 为 true 时充值，为 false 时消费。
+ * @return 未发生致命错误时返回 `APP_OK`，否则返回对应错误码。
+ */
 static AppResult handle_card_amount(CliInput *input, const Account *actor,
                                     const bool recharge) {
   char text[64] = {0};
@@ -819,8 +903,15 @@ static void print_clerk_menu(const Account *actor) {
   printf("0. 退出登录\n");
 }
 
-// 按角色分发菜单编号。返回业务结果供角色菜单判断是否为致命错误；所有
-// 提示已由处理函数输出。
+/**
+ * @brief 按角色分发菜单编号。
+ * @details 返回业务结果供角色菜单判断是否为致命错误；用户提示已由处理函数
+ *          输出。
+ * @param[in,out] input 会话级输入状态。
+ * @param[in] actor 当前登录的调用者会话。
+ * @param[in] choice 菜单编号。
+ * @return 处理结果；无效菜单编号返回 `APP_OK`。
+ */
 static AppResult dispatch_menu(CliInput *input, const Account *actor,
                                const int choice) {
   switch (actor->role) {
@@ -883,8 +974,14 @@ static AppResult dispatch_menu(CliInput *input, const Account *actor,
   return APP_OK;
 }
 
-// 登录后的角色菜单。退出登录返回 APP_OK，由外层回到未登录菜单；致命错误
-// 向上传播。EOF 由调用方根据 CliInput 状态结束程序。
+/**
+ * @brief 运行登录后的角色菜单。
+ * @details 退出登录返回 `APP_OK`，由外层回到未登录菜单；致命错误向上传播。
+ *          EOF 由调用方根据输入状态结束程序。
+ * @param[in,out] input 会话级输入状态。
+ * @param[in] actor 当前登录的调用者会话。
+ * @return 正常退出或 EOF 时返回 `APP_OK`，否则返回对应错误码。
+ */
 static AppResult run_role_menu(CliInput *input, const Account *actor) {
   for (;;) {
     if (input->io_error) {
@@ -941,8 +1038,12 @@ static AppResult run_role_menu(CliInput *input, const Account *actor) {
   }
 }
 
-// 未登录菜单：登录后进入角色菜单，退出登录后回到本菜单。选择 0 或遇到 EOF
-// 时结束。
+/**
+ * @brief 运行未登录菜单。
+ * @details 登录后进入角色菜单，退出登录后回到本菜单；选择 `0` 或遇到 EOF 时结束。
+ * @param[in,out] input 会话级输入状态。
+ * @return 正常退出或 EOF 时返回 `APP_OK`，否则返回对应错误码。
+ */
 static AppResult run_start_menu(CliInput *input) {
   for (;;) {
     if (input->io_error) {
@@ -998,12 +1099,10 @@ static AppResult run_start_menu(CliInput *input) {
     if (input->eof) {
       return APP_OK;
     }
-    // 退出登录后继续显示未登录菜单。
   }
 }
 
 AppResult cli_run() {
-  // 程序入口由 main 管理存储生命周期；本函数只负责 CLI 交互和会话。
   configure_console_encoding();
 
   CliInput input = {.eof = false, .io_error = false};
