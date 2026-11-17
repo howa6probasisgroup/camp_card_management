@@ -4,12 +4,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// 数据目录相对于启动工作目录。正式数据与测试数据分离：测试由各自临时目录
-// 调用存储接口，入口只使用运行目录下的 data。
 #ifdef CAMP_CARD_BACKEND_READY
+/**
+ * @brief 正式数据目录名。
+ * @details 路径相对于启动工作目录；测试通过各自临时目录调用存储接口，入口
+ *          只使用该目录。
+ */
 static const char DATA_DIRECTORY[] = "data";
 
-// 入口只负责存储生命周期，业务操作全部由 CLI 通过服务接口完成。
+/**
+ * @brief 运行正式程序入口。
+ * @details 初始化存储、运行 CLI 并关闭存储；业务操作由 CLI 通过服务接口完成。
+ * @return 全部步骤成功时返回 `EXIT_SUCCESS`，否则返回 `EXIT_FAILURE`。
+ */
 int main() {
   AppResult result = storage_init(DATA_DIRECTORY);
   if (result != APP_OK) {
@@ -31,7 +38,11 @@ int main() {
   return EXIT_SUCCESS;
 }
 #else
-// 真实存储实现尚未接入时，入口不返回成功，也不伪造业务结果。
+/**
+ * @brief 提示后端尚未接入。
+ * @details 存储和服务实现未接入时不返回成功，也不伪造业务结果。
+ * @return 始终返回 `EXIT_FAILURE`。
+ */
 int main() {
   fputs("真实存储实现尚未接入，无法启动。\n", stderr);
   return EXIT_FAILURE;
