@@ -2,8 +2,12 @@
 #include "services/auth_service.h"
 #include "services/card_service.h"
 
-// CLI 测试使用的业务服务桩。仅用于验证菜单输入与调用映射，不实现任何
-// 业务规则，也不读写存储。成功路径返回空结果，失败路径返回约定的错误码。
+/**
+ * @file cli_stub_services.c
+ * @brief 提供 CLI 测试使用的业务服务桩。
+ * @details 仅用于验证菜单输入与调用映射，不实现业务规则，也不读写存储。
+ *          成功路径返回空结果，失败路径返回约定的错误码。
+ */
 
 AppResult auth_needs_bootstrap(bool *out_needed) {
   if (out_needed == nullptr) {
