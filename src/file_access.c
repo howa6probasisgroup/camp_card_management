@@ -80,6 +80,93 @@ AppResult file_access_kind(const char *path, FileAccessKind *out) {
   return APP_OK;
 }
 
+AppResult file_access_same_directory(const char *first, const char *second,
+                                     bool *out) {
+  if (!first || !*first || !second || !*second || !out)
+    return APP_ERR_INVALID_ARGUMENT;
+#ifdef _WIN32
+  wchar_t *wide1 = nullptr;
+  AppResult r = wide_path(first, &wide1);
+  if (r != APP_OK)
+    return r;
+  wchar_t *wide2 = nullptr;
+  r = wide_path(second, &wide2);
+  if (r != APP_OK) {
+    free(wide1);
+    return r;
+  }
+  DWORD a1 = GetFileAttributesW(wide1);
+  DWORD err1 = GetLastError();
+  if (a1 == INVALID_FILE_ATTRIBUTES) {
+    free(wide1);
+    free(wide2);
+    return windows_error(err1);
+  }
+  if ((a1 & FILE_ATTRIBUTE_REPARSE_POINT) || !(a1 & FILE_ATTRIBUTE_DIRECTORY)) {
+    free(wide1);
+    free(wide2);
+    return APP_ERR_INVALID_DATA;
+  }
+  DWORD a2 = GetFileAttributesW(wide2);
+  DWORD err2 = GetLastError();
+  if (a2 == INVALID_FILE_ATTRIBUTES) {
+    free(wide1);
+    free(wide2);
+    return windows_error(err2);
+  }
+  if ((a2 & FILE_ATTRIBUTE_REPARSE_POINT) || !(a2 & FILE_ATTRIBUTE_DIRECTORY)) {
+    free(wide1);
+    free(wide2);
+    return APP_ERR_INVALID_DATA;
+  }
+  HANDLE h1 = CreateFileW(wide1, 0,
+                          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                          nullptr, OPEN_EXISTING,
+                          FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+  free(wide1);
+  if (h1 == INVALID_HANDLE_VALUE) {
+    free(wide2);
+    return APP_ERR_IO;
+  }
+  HANDLE h2 = CreateFileW(wide2, 0,
+                          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                          nullptr, OPEN_EXISTING,
+                          FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+  free(wide2);
+  if (h2 == INVALID_HANDLE_VALUE) {
+    CloseHandle(h1);
+    return APP_ERR_IO;
+  }
+  BY_HANDLE_FILE_INFORMATION fi1;
+  BY_HANDLE_FILE_INFORMATION fi2;
+  if (!GetFileInformationByHandle(h1, &fi1) ||
+      !GetFileInformationByHandle(h2, &fi2)) {
+    CloseHandle(h1);
+    CloseHandle(h2);
+    return APP_ERR_IO;
+  }
+  CloseHandle(h1);
+  CloseHandle(h2);
+  *out = (fi1.dwVolumeSerialNumber == fi2.dwVolumeSerialNumber &&
+          fi1.nFileIndexHigh == fi2.nFileIndexHigh &&
+          fi1.nFileIndexLow == fi2.nFileIndexLow);
+  return APP_OK;
+#else
+  struct stat st1;
+  if (lstat(first, &st1) != 0)
+    return errno == ENOENT ? APP_ERR_NOT_FOUND : APP_ERR_IO;
+  if (!S_ISDIR(st1.st_mode))
+    return APP_ERR_INVALID_DATA;
+  struct stat st2;
+  if (lstat(second, &st2) != 0)
+    return errno == ENOENT ? APP_ERR_NOT_FOUND : APP_ERR_IO;
+  if (!S_ISDIR(st2.st_mode))
+    return APP_ERR_INVALID_DATA;
+  *out = (st1.st_dev == st2.st_dev && st1.st_ino == st2.st_ino);
+  return APP_OK;
+#endif
+}
+
 static AppResult make_one(const char *path) {
   FileAccessKind kind;
   AppResult r = file_access_kind(path, &kind);

@@ -63,6 +63,23 @@ int main() {
   REQUIRE(!strcmp(output, "unchanged"));
   REQUIRE(file_access_remove(nested) == APP_ERR_IO);
   REQUIRE(file_access_write(nested, "x", 1) == APP_ERR_IO);
+  bool same = false;
+  REQUIRE(file_access_same_directory(nested, nested, &same) == APP_OK && same);
+  REQUIRE(file_access_same_directory(root, nested, &same) == APP_OK && !same);
+  char alias_dir[4096];
+  test_path(root, "中文目录/a/../a/b", alias_dir, sizeof(alias_dir));
+  REQUIRE(file_access_same_directory(nested, alias_dir, &same) == APP_OK &&
+          same);
+  REQUIRE(file_access_same_directory(nullptr, nested, &same) ==
+          APP_ERR_INVALID_ARGUMENT);
+  REQUIRE(file_access_same_directory(nested, nullptr, &same) ==
+          APP_ERR_INVALID_ARGUMENT);
+  REQUIRE(file_access_same_directory(nested, nested, nullptr) ==
+          APP_ERR_INVALID_ARGUMENT);
+  REQUIRE(file_access_same_directory(nested, "nonexistent", &same) ==
+          APP_ERR_NOT_FOUND);
+  REQUIRE(file_access_same_directory(nested, path, &same) ==
+          APP_ERR_INVALID_DATA);
   data = output;
   size = 99;
   REQUIRE(file_access_read(nested, &data, &size) == APP_ERR_IO &&

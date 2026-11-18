@@ -129,49 +129,126 @@ static void invalid_account_cases(const char *path, const Account *valid) {
   REQUIRE(file_access_write(path, original, size) == APP_OK);
   free(original);
 }
-static void test_account_path_collision(const char *root) {
-  Account first = account(), second = account(), loaded;
-  strcpy(first.username, "aaa");
-  strcpy(second.username, "aaG");
-  REQUIRE(storage_account_save(&first) == APP_OK);
-  char alias[4096];
-  test_path(root, "accounts/YWFH.json", alias, sizeof(alias));
+static void test_account_hex_paths_and_case_coexistence(const char *root) {
+  Account upper = account(), lower = account(), loaded;
+  strcpy(upper.username, "Admin");
+  upper.role = ROLE_ADMIN;
+  upper.student_id[0] = '\0';
+  strcpy(lower.username, "admin");
+  lower.role = ROLE_ADMIN;
+  lower.student_id[0] = '\0';
+
+  REQUIRE(storage_account_save(&upper) == APP_OK);
+  REQUIRE(storage_account_save(&lower) == APP_OK);
+
+  char upper_file[4096], lower_file[4096];
+  test_path(root, "accounts/41646d696e.json", upper_file, sizeof(upper_file));
+  test_path(root, "accounts/61646d696e.json", lower_file, sizeof(lower_file));
+
   FileAccessKind kind;
-  AppResult lookup = file_access_kind(alias, &kind);
-  if (lookup == APP_OK) {
-    REQUIRE(kind == FILE_ACCESS_REGULAR);
-    REQUIRE(storage_account_load(second.username, &loaded) ==
-            APP_ERR_INVALID_DATA);
-    REQUIRE(storage_account_save(&second) == APP_ERR_INVALID_DATA);
-    REQUIRE(storage_account_delete(second.username) == APP_ERR_INVALID_DATA);
-    REQUIRE(storage_account_load(first.username, &loaded) == APP_OK);
-    REQUIRE(strcmp(loaded.username, first.username) == 0);
-  } else {
-    REQUIRE(lookup == APP_ERR_NOT_FOUND);
-    REQUIRE(storage_account_save(&second) == APP_OK);
-    REQUIRE(storage_account_delete(second.username) == APP_OK);
-    REQUIRE(storage_account_load(first.username, &loaded) == APP_OK);
-  }
-  REQUIRE(storage_account_delete(first.username) == APP_OK);
-  /* 在大小写敏感的文件系统上也验证路径与主键不一致时禁止覆盖和删除。 */
-  REQUIRE(storage_account_save(&first) == APP_OK);
-  char primary[4096];
-  test_path(root, "accounts/YWFh.json", primary, sizeof(primary));
-  char *bytes;
-  size_t size;
-  REQUIRE(file_access_read(primary, &bytes, &size) == APP_OK);
-  REQUIRE(file_access_write(alias, bytes, size) == APP_OK);
-  REQUIRE(storage_account_save(&second) == APP_ERR_INVALID_DATA);
-  REQUIRE(storage_account_delete(second.username) == APP_ERR_INVALID_DATA);
-  char *after;
-  size_t after_size;
-  REQUIRE(file_access_read(alias, &after, &after_size) == APP_OK);
-  REQUIRE(after_size == size && memcmp(bytes, after, size) == 0);
+  REQUIRE(file_access_kind(upper_file, &kind) == APP_OK &&
+          kind == FILE_ACCESS_REGULAR);
+  REQUIRE(file_access_kind(lower_file, &kind) == APP_OK &&
+          kind == FILE_ACCESS_REGULAR);
+
+  REQUIRE(storage_account_load("Admin", &loaded) == APP_OK &&
+          !strcmp(loaded.username, "Admin"));
+  REQUIRE(storage_account_load("admin", &loaded) == APP_OK &&
+          !strcmp(loaded.username, "admin"));
+
+  AccountList accounts = {};
+  REQUIRE(storage_account_list(&accounts) == APP_OK && accounts.size == 2);
+  account_list_clear(&accounts);
+
+  REQUIRE(storage_account_delete("admin") == APP_OK);
+  REQUIRE(storage_account_load("admin", &loaded) == APP_ERR_NOT_FOUND);
+  REQUIRE(storage_account_load("Admin", &loaded) == APP_OK &&
+          !strcmp(loaded.username, "Admin"));
+  REQUIRE(storage_account_delete("Admin") == APP_OK);
+
+  /* 验证文件内用户名与路径主键不符时，禁止读取、覆盖或删除。 */
+  strcpy(lower.username, "testuser");
+  REQUIRE(storage_account_save(&lower) == APP_OK);
+  char test_file[4096];
+  test_path(root, "accounts/7465737475736572.json", test_file,
+            sizeof(test_file));
+  char *bytes = nullptr;
+  size_t size = 0;
+  REQUIRE(file_access_read(test_file, &bytes, &size) == APP_OK);
+  char mismatch_file[4096];
+  test_path(root, "accounts/616161.json", mismatch_file, sizeof(mismatch_file));
+  REQUIRE(file_access_write(mismatch_file, bytes, size) == APP_OK);
+  Account mismatch_acc = account();
+  strcpy(mismatch_acc.username, "aaa");
+  REQUIRE(storage_account_load("aaa", &loaded) == APP_ERR_INVALID_DATA);
+  REQUIRE(storage_account_save(&mismatch_acc) == APP_ERR_INVALID_DATA);
+  REQUIRE(storage_account_delete("aaa") == APP_ERR_INVALID_DATA);
   free(bytes);
-  free(after);
-  REQUIRE(file_access_remove(alias) == APP_OK);
-  if (file_access_kind(primary, &kind) == APP_OK)
-    REQUIRE(file_access_remove(primary) == APP_OK);
+  REQUIRE(file_access_remove(mismatch_file) == APP_OK);
+  REQUIRE(storage_account_delete("testuser") == APP_OK);
+}
+
+static void test_name_index_check_and_repair(const char *root) {
+  NameIndexReport report;
+  REQUIRE(storage_name_index_check(nullptr) == APP_ERR_INVALID_ARGUMENT);
+
+  REQUIRE(storage_name_index_check(&report) == APP_OK);
+
+  StudentCardRecord extra = record();
+  strcpy(extra.student_id, "251543209");
+  strcpy(extra.name, "王五");
+  REQUIRE(storage_record_save(&extra) == APP_OK);
+  REQUIRE(storage_name_index_check(&report) == APP_OK);
+  REQUIRE(report.missing == 1);
+  size_t prev_stale = report.stale;
+
+  char stale_path[4096];
+  test_path(root, "indexes/name/5b/yg/5L/iJ/251543299", stale_path,
+            sizeof(stale_path));
+  REQUIRE(file_access_write(stale_path, nullptr, 0) == APP_OK);
+  REQUIRE(storage_name_index_check(&report) == APP_OK);
+  REQUIRE(report.missing == 1 && report.stale == prev_stale + 1);
+
+  char extra_rec_path[4096];
+  test_path(root, "students/25/15/43/2/09.json", extra_rec_path,
+            sizeof(extra_rec_path));
+  REQUIRE(file_access_write(extra_rec_path, "{broken}", 8) == APP_OK);
+  REQUIRE(storage_name_index_check(&report) == APP_ERR_INVALID_DATA);
+  REQUIRE(storage_name_index_repair() == APP_ERR_INVALID_DATA);
+
+  REQUIRE(storage_record_save(&extra) == APP_OK);
+
+  char expected_file[4096];
+  char expected_dir[4096];
+  test_path(root, "indexes/name/54/6L/5L/qU", expected_dir,
+            sizeof(expected_dir));
+  REQUIRE(file_access_make_directories(expected_dir) == APP_OK);
+  test_path(root, "indexes/name/54/6L/5L/qU/251543209", expected_file,
+            sizeof(expected_file));
+  REQUIRE(file_access_write(expected_file, "non_empty", 9) == APP_OK);
+  REQUIRE(storage_name_index_check(&report) == APP_ERR_INVALID_DATA);
+  REQUIRE(storage_name_index_repair() == APP_ERR_INVALID_DATA);
+  REQUIRE(file_access_remove(expected_file) == APP_OK);
+
+  REQUIRE(storage_name_index_repair() == APP_OK);
+  REQUIRE(storage_name_index_check(&report) == APP_OK);
+  REQUIRE(report.missing == 0 && report.stale == 0);
+
+  FileAccessKind kind;
+  REQUIRE(file_access_kind(expected_file, &kind) == APP_OK &&
+          kind == FILE_ACCESS_REGULAR);
+  char *cdata;
+  size_t csize;
+  REQUIRE(file_access_read(expected_file, &cdata, &csize) == APP_OK &&
+          csize == 0);
+  file_access_free(cdata);
+
+  REQUIRE(file_access_kind(stale_path, &kind) == APP_ERR_NOT_FOUND);
+
+  test_path(root, "students/25/15/43/2/09.json", extra_rec_path,
+            sizeof(extra_rec_path));
+  REQUIRE(file_access_remove(extra_rec_path) == APP_OK);
+  REQUIRE(file_access_remove(expected_file) == APP_OK);
 }
 
 int main() {
@@ -185,7 +262,7 @@ int main() {
   REQUIRE(storage_init(nullptr) == APP_ERR_INVALID_ARGUMENT);
   REQUIRE(storage_init(root) == APP_OK);
   REQUIRE(storage_init(root) == APP_ERR_INVALID_ARGUMENT);
-  test_account_path_collision(root);
+  test_account_hex_paths_and_case_coexistence(root);
   REQUIRE(storage_account_count(&count) == APP_OK && count == 0);
   StudentList students = {};
   AccountList accounts = {};
@@ -220,7 +297,7 @@ int main() {
   REQUIRE(storage_account_list(&accounts) == APP_OK && accounts.size == 2);
   REQUIRE(account_list_find_by_username(&accounts, user.username));
   account_list_clear(&accounts);
-  test_path(root, "accounts/c3R1ZGVudDAwMQ.json", account_file,
+  test_path(root, "accounts/73747564656e74303031.json", account_file,
             sizeof(account_file));
   test_path(root, "students/25/15/43/2/01.json", record_file,
             sizeof(record_file));
@@ -238,7 +315,7 @@ int main() {
   invalid_record_cases(record_file, &a);
   invalid_account_cases(account_file, &user);
   /* 非规范路径不参与列表，合法路径中的损坏记录必须报错。 */
-  test_path(root, "accounts/not base64.json", path, sizeof(path));
+  test_path(root, "accounts/not_hex.json", path, sizeof(path));
   REQUIRE(file_access_write(path, "broken", 6) == APP_OK);
   REQUIRE(storage_account_count(&count) == APP_OK && count == 2);
   test_path(root, "students/garbage.json", path, sizeof(path));
@@ -246,12 +323,18 @@ int main() {
   REQUIRE(storage_record_list(&students) == APP_OK && students.size == 2);
   student_list_clear(&students);
   /* 同名的失效索引和姓名不符的主记录只跳过；损坏主记录不跳过。 */
-  REQUIRE(storage_name_index_append(a.name, "999999999") == APP_OK);
+  REQUIRE(storage_name_index_append(a.name, "999999999") ==
+          APP_ERR_NOT_FOUND);
+  REQUIRE(storage_name_index_append("李四", a.student_id) ==
+          APP_ERR_INVALID_ARGUMENT);
+  test_path(root, "indexes/name/5b/yg/5L/iJ/999999999", path, sizeof(path));
+  REQUIRE(file_access_write(path, nullptr, 0) == APP_OK);
   strcpy(b.name, "李四");
   REQUIRE(storage_record_save(&b) == APP_OK);
   REQUIRE(storage_record_find_by_name(a.name, &students) == APP_OK &&
           students.size == 1);
   student_list_clear(&students);
+  REQUIRE(file_access_remove(path) == APP_OK);
   REQUIRE(file_access_write(record_file, "{}", 2) == APP_OK);
   REQUIRE(storage_record_find_by_name(a.name, &students) ==
               APP_ERR_INVALID_DATA &&
@@ -355,6 +438,7 @@ int main() {
     REQUIRE(chmod(record_file, 0600) == 0);
   }
 #endif
+  test_name_index_check_and_repair(root);
   /* 初始化后根目录缺失不能误判成零账号或被保存操作悄悄重建。 */
   test_path(root, "accounts", path, sizeof(path));
   test_remove_tree(path);

@@ -62,16 +62,19 @@ int main() {
   REQUIRE(account_delete(&admin, "student") == APP_OK);
   REQUIRE(storage_record_load(profile.student_id, &record) == APP_OK &&
           record.balance_cents == 0);
-  /* 管理员不能用另一个用户名的文件名别名绕过“禁止删除自己”。 */
+  /* 大小写不同的用户名共存且不会相互影响。 */
   REQUIRE(account_create(&admin, "aaa", "demo-pass-123", ROLE_ADMIN, "") ==
           APP_OK);
-  Account alias_admin;
-  REQUIRE(auth_login("aaa", "demo-pass-123", &alias_admin) == APP_OK);
-  AppResult alias_delete = account_delete(&alias_admin, "aaG");
-  REQUIRE(alias_delete == APP_ERR_INVALID_DATA ||
-          alias_delete == APP_ERR_NOT_FOUND);
-  REQUIRE(auth_login("aaa", "demo-pass-123", &alias_admin) == APP_OK);
-  test_path(root, "accounts/YWRtaW4.json", path, sizeof(path));
+  REQUIRE(account_create(&admin, "aaG", "demo-pass-123", ROLE_ADMIN, "") ==
+          APP_OK);
+  Account aaa_admin, aag_admin;
+  REQUIRE(auth_login("aaa", "demo-pass-123", &aaa_admin) == APP_OK);
+  REQUIRE(auth_login("aaG", "demo-pass-123", &aag_admin) == APP_OK);
+  REQUIRE(account_delete(&aaa_admin, "aaG") == APP_OK);
+  REQUIRE(auth_login("aaa", "demo-pass-123", &aaa_admin) == APP_OK);
+  REQUIRE(auth_login("aaG", "demo-pass-123", &aag_admin) == APP_ERR_AUTH_FAILED);
+  REQUIRE(account_delete(&admin, "aaa") == APP_OK);
+  test_path(root, "accounts/61646d696e.json", path, sizeof(path));
   REQUIRE(file_access_write(path, "{}", 2) == APP_OK);
   needed = false;
   REQUIRE(auth_needs_bootstrap(&needed) == APP_ERR_INVALID_DATA && !needed);

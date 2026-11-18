@@ -127,6 +127,15 @@ static void encode(const char *text, char *out) {
   }
   out[k] = '\0';
 }
+static char *duplicate_string(const char *s) {
+  if (!s)
+    return nullptr;
+  size_t n = strlen(s);
+  char *copy = malloc(n + 1);
+  if (copy)
+    memcpy(copy, s, n + 1);
+  return copy;
+}
 static char *path_with_suffix(const char *root, const char *suffix) {
   size_t a = strlen(root), b = strlen(suffix);
   if (a > SIZE_MAX - b - 2)
@@ -136,9 +145,19 @@ static char *path_with_suffix(const char *root, const char *suffix) {
     snprintf(p, a + b + 2, "%s/%s", root, suffix);
   return p;
 }
+static void hex_encode_username(const char *username, char *out) {
+  static const char hex_digits[] = "0123456789abcdef";
+  size_t k = 0;
+  for (size_t i = 0; username[i]; i++) {
+    unsigned char c = (unsigned char)username[i];
+    out[k++] = hex_digits[c >> 4];
+    out[k++] = hex_digits[c & 0x0f];
+  }
+  out[k] = '\0';
+}
 static char *account_path(const char *username) {
-  char encoded[4 * ((USERNAME_MAX_BYTES + 2) / 3) + 6];
-  encode(username, encoded);
+  char encoded[2 * USERNAME_MAX_BYTES + 6];
+  hex_encode_username(username, encoded);
   strcat(encoded, ".json");
   return path_with_suffix(accounts_dir, encoded);
 }
@@ -458,37 +477,33 @@ AppResult storage_account_delete(const char *username) {
   return r;
 }
 
-/* 文件名必须是合法用户名的规范无填充编码，非规范条目不属于记录。 */
+/* 文件名必须是由有效用户名生成的规范小写十六进制加 .json，非规范条目不属于记录。 */
 static bool account_filename(const char *name, char *username) {
-  size_t n = strlen(name);
-  if (n <= 5 || strcmp(name + n - 5, ".json") != 0)
+  size_t len = strlen(name);
+  if (len < 7 || strcmp(name + len - 5, ".json") != 0)
     return false;
-  n -= 5;
-  if (n > 4 * ((USERNAME_MAX_BYTES + 2) / 3) || n % 4 == 1)
+  size_t hex_len = len - 5;
+  if (hex_len % 2 != 0 || hex_len > 2 * USERNAME_MAX_BYTES)
     return false;
-  unsigned bits = 0, value = 0;
   size_t k = 0;
-  for (size_t i = 0; i < n; i++) {
-    const char *p = strchr(alphabet, name[i]);
-    if (!p)
+  for (size_t i = 0; i < hex_len; i += 2) {
+    char c1 = name[i];
+    char c2 = name[i + 1];
+    int v1 = (c1 >= '0' && c1 <= '9')   ? (c1 - '0')
+             : (c1 >= 'a' && c1 <= 'f') ? (c1 - 'a' + 10)
+                                        : -1;
+    int v2 = (c2 >= '0' && c2 <= '9')   ? (c2 - '0')
+             : (c2 >= 'a' && c2 <= 'f') ? (c2 - 'a' + 10)
+                                        : -1;
+    if (v1 < 0 || v2 < 0)
       return false;
-    value = (value << 6) | (unsigned)(p - alphabet);
-    bits += 6;
-    if (bits >= 8) {
-      bits -= 8;
-      if (k >= USERNAME_MAX_BYTES)
-        return false;
-      username[k++] = (char)((value >> bits) & 255);
-      if (!username[k - 1])
-        return false;
-    }
+    char byte = (char)((v1 << 4) | v2);
+    if (!byte)
+      return false;
+    username[k++] = byte;
   }
   username[k] = '\0';
-  if (!username_valid(username))
-    return false;
-  char encoded[4 * ((USERNAME_MAX_BYTES + 2) / 3) + 1];
-  encode(username, encoded);
-  return strlen(encoded) == n && !memcmp(encoded, name, n);
+  return username_valid(username);
 }
 static AppResult visit_account(const char *name, FileAccessKind kind,
                                void *context) {
@@ -626,6 +641,12 @@ AppResult storage_name_index_append(const char *name, const char *id) {
   AppResult r = ready();
   if (r != APP_OK)
     return r;
+  StudentCardRecord record;
+  r = storage_record_load(id, &record);
+  if (r != APP_OK)
+    return r;
+  if (strcmp(record.name, name) != 0)
+    return APP_ERR_INVALID_ARGUMENT;
   char *dir = name_path(name);
   if (!dir)
     return APP_ERR_NO_MEMORY;
@@ -656,4 +677,337 @@ AppResult storage_name_index_append(const char *name, const char *id) {
   }
   free(path);
   return r;
+}
+
+typedef struct ActualIndexNode {
+  char *path;
+  char *dir;
+  char id[STUDENT_ID_LENGTH + 1];
+  struct ActualIndexNode *next;
+} ActualIndexNode;
+
+typedef struct MissingIndexNode {
+  char id[STUDENT_ID_LENGTH + 1];
+  char name[NAME_MAX_BYTES + 1];
+  struct MissingIndexNode *next;
+} MissingIndexNode;
+
+typedef struct StaleIndexNode {
+  char *path;
+  struct StaleIndexNode *next;
+} StaleIndexNode;
+
+typedef struct {
+  MissingIndexNode *missing_head;
+  size_t missing_count;
+  StaleIndexNode *stale_head;
+  size_t stale_count;
+} NameIndexAnalysis;
+
+static void free_analysis(NameIndexAnalysis *analysis) {
+  MissingIndexNode *m = analysis->missing_head;
+  while (m) {
+    MissingIndexNode *next = m->next;
+    free(m);
+    m = next;
+  }
+  StaleIndexNode *s = analysis->stale_head;
+  while (s) {
+    StaleIndexNode *next = s->next;
+    free(s->path);
+    free(s);
+    s = next;
+  }
+  analysis->missing_head = nullptr;
+  analysis->stale_head = nullptr;
+  analysis->missing_count = 0;
+  analysis->stale_count = 0;
+}
+
+typedef struct {
+  const char *dir_path;
+  ActualIndexNode **head;
+} ActualCollector;
+
+static AppResult collect_actual_indexes(const char *name, FileAccessKind kind,
+                                        void *context) {
+  ActualCollector *col = context;
+  if (kind == FILE_ACCESS_DIRECTORY) {
+    char *sub = path_with_suffix(col->dir_path, name);
+    if (!sub)
+      return APP_ERR_NO_MEMORY;
+    ActualCollector next_col = {sub, col->head};
+    AppResult r =
+        file_access_visit_directory(sub, collect_actual_indexes, &next_col);
+    free(sub);
+    return r;
+  }
+  if (kind == FILE_ACCESS_REGULAR && digits(name, STUDENT_ID_LENGTH)) {
+    char *path = path_with_suffix(col->dir_path, name);
+    if (!path)
+      return APP_ERR_NO_MEMORY;
+    char *data = nullptr;
+    size_t size = 0;
+    AppResult r = file_access_read(path, &data, &size);
+    if (r != APP_OK) {
+      free(path);
+      return r;
+    }
+    file_access_free(data);
+    if (size == 0) {
+      ActualIndexNode *node = malloc(sizeof(*node));
+      if (!node) {
+        free(path);
+        return APP_ERR_NO_MEMORY;
+      }
+      node->path = path;
+      node->dir = duplicate_string(col->dir_path);
+      if (!node->dir) {
+        free(path);
+        free(node);
+        return APP_ERR_NO_MEMORY;
+      }
+      memcpy(node->id, name, sizeof(node->id));
+      node->next = *col->head;
+      *col->head = node;
+      return APP_OK;
+    }
+    free(path);
+  }
+  return APP_OK;
+}
+
+static AppResult analyze_name_indexes(NameIndexAnalysis *analysis) {
+  AppResult r = ready();
+  if (r != APP_OK)
+    return r;
+
+  StudentList students = {};
+  r = storage_record_list(&students);
+  if (r != APP_OK)
+    return r;
+
+  for (StudentNode *node = students.head; node; node = node->next) {
+    const StudentCardRecord *rec = &node->value;
+    char *dir = name_path(rec->name);
+    if (!dir) {
+      student_list_clear(&students);
+      return APP_ERR_NO_MEMORY;
+    }
+    size_t prefix_len = strlen(names_dir);
+    for (size_t i = prefix_len + 1; dir[i]; i++) {
+      if (dir[i] == '/') {
+        dir[i] = '\0';
+        FileAccessKind pk;
+        AppResult pr = file_access_kind(dir, &pk);
+        dir[i] = '/';
+        if (pr == APP_OK && pk != FILE_ACCESS_DIRECTORY) {
+          free(dir);
+          student_list_clear(&students);
+          return APP_ERR_INVALID_DATA;
+        }
+      }
+    }
+    FileAccessKind dk;
+    AppResult dr = file_access_kind(dir, &dk);
+    if (dr == APP_OK && dk != FILE_ACCESS_DIRECTORY) {
+      free(dir);
+      student_list_clear(&students);
+      return APP_ERR_INVALID_DATA;
+    }
+
+    char *file_path = path_with_suffix(dir, rec->student_id);
+    free(dir);
+    if (!file_path) {
+      student_list_clear(&students);
+      return APP_ERR_NO_MEMORY;
+    }
+    FileAccessKind fk;
+    AppResult fr = file_access_kind(file_path, &fk);
+    if (fr == APP_ERR_NOT_FOUND) {
+      MissingIndexNode *m = malloc(sizeof(*m));
+      if (!m) {
+        free(file_path);
+        student_list_clear(&students);
+        return APP_ERR_NO_MEMORY;
+      }
+      memcpy(m->id, rec->student_id, sizeof(m->id));
+      memcpy(m->name, rec->name, sizeof(m->name));
+      m->next = analysis->missing_head;
+      analysis->missing_head = m;
+      analysis->missing_count++;
+    } else if (fr == APP_OK) {
+      if (fk != FILE_ACCESS_REGULAR) {
+        free(file_path);
+        student_list_clear(&students);
+        return APP_ERR_INVALID_DATA;
+      }
+      char *data = nullptr;
+      size_t size = 0;
+      r = file_access_read(file_path, &data, &size);
+      if (r != APP_OK) {
+        free(file_path);
+        student_list_clear(&students);
+        return r;
+      }
+      file_access_free(data);
+      if (size != 0) {
+        free(file_path);
+        student_list_clear(&students);
+        return APP_ERR_INVALID_DATA;
+      }
+    } else {
+      free(file_path);
+      student_list_clear(&students);
+      return fr;
+    }
+    free(file_path);
+  }
+
+  ActualIndexNode *actual_head = nullptr;
+  ActualCollector col = {names_dir, &actual_head};
+  r = file_access_visit_directory(names_dir, collect_actual_indexes, &col);
+  if (r != APP_OK && r != APP_ERR_NOT_FOUND) {
+    while (actual_head) {
+      ActualIndexNode *next = actual_head->next;
+      free(actual_head->path);
+      free(actual_head->dir);
+      free(actual_head);
+      actual_head = next;
+    }
+    student_list_clear(&students);
+    return r;
+  }
+
+  for (ActualIndexNode *act = actual_head; act; act = act->next) {
+    StudentCardRecord *s = student_list_find_by_id(&students, act->id);
+    bool is_stale = false;
+    if (!s) {
+      is_stale = true;
+    } else {
+      char *expected_dir = name_path(s->name);
+      if (!expected_dir) {
+        while (actual_head) {
+          ActualIndexNode *next = actual_head->next;
+          free(actual_head->path);
+          free(actual_head->dir);
+          free(actual_head);
+          actual_head = next;
+        }
+        student_list_clear(&students);
+        return APP_ERR_NO_MEMORY;
+      }
+      bool same = false;
+      AppResult sr = file_access_same_directory(act->dir, expected_dir, &same);
+      free(expected_dir);
+      if (sr == APP_ERR_NOT_FOUND) {
+        same = false;
+      } else if (sr != APP_OK) {
+        while (actual_head) {
+          ActualIndexNode *next = actual_head->next;
+          free(actual_head->path);
+          free(actual_head->dir);
+          free(actual_head);
+          actual_head = next;
+        }
+        student_list_clear(&students);
+        return sr;
+      }
+      if (!same)
+        is_stale = true;
+    }
+
+    if (is_stale) {
+      StaleIndexNode *st = malloc(sizeof(*st));
+      if (!st) {
+        while (actual_head) {
+          ActualIndexNode *next = actual_head->next;
+          free(actual_head->path);
+          free(actual_head->dir);
+          free(actual_head);
+          actual_head = next;
+        }
+        student_list_clear(&students);
+        return APP_ERR_NO_MEMORY;
+      }
+      st->path = duplicate_string(act->path);
+      if (!st->path) {
+        free(st);
+        while (actual_head) {
+          ActualIndexNode *next = actual_head->next;
+          free(actual_head->path);
+          free(actual_head->dir);
+          free(actual_head);
+          actual_head = next;
+        }
+        student_list_clear(&students);
+        return APP_ERR_NO_MEMORY;
+      }
+      st->next = analysis->stale_head;
+      analysis->stale_head = st;
+      analysis->stale_count++;
+    }
+  }
+
+  while (actual_head) {
+    ActualIndexNode *next = actual_head->next;
+    free(actual_head->path);
+    free(actual_head->dir);
+    free(actual_head);
+    actual_head = next;
+  }
+  student_list_clear(&students);
+  return APP_OK;
+}
+
+AppResult storage_name_index_check(NameIndexReport *out) {
+  if (!out)
+    return APP_ERR_INVALID_ARGUMENT;
+  NameIndexAnalysis analysis = {};
+  AppResult r = analyze_name_indexes(&analysis);
+  if (r == APP_OK) {
+    out->missing = analysis.missing_count;
+    out->stale = analysis.stale_count;
+  }
+  free_analysis(&analysis);
+  return r;
+}
+
+AppResult storage_name_index_repair() {
+  NameIndexAnalysis analysis = {};
+  AppResult r = analyze_name_indexes(&analysis);
+  if (r != APP_OK) {
+    free_analysis(&analysis);
+    return r;
+  }
+  for (MissingIndexNode *m = analysis.missing_head; m; m = m->next) {
+    char *dir = name_path(m->name);
+    if (!dir) {
+      free_analysis(&analysis);
+      return APP_ERR_NO_MEMORY;
+    }
+    r = file_access_make_directories(dir);
+    char *path = path_with_suffix(dir, m->id);
+    free(dir);
+    if (!path) {
+      free_analysis(&analysis);
+      return APP_ERR_NO_MEMORY;
+    }
+    if (r == APP_OK)
+      r = file_access_write(path, nullptr, 0);
+    free(path);
+    if (r != APP_OK) {
+      free_analysis(&analysis);
+      return r;
+    }
+  }
+  for (StaleIndexNode *s = analysis.stale_head; s; s = s->next) {
+    r = file_access_remove(s->path);
+    if (r != APP_OK) {
+      free_analysis(&analysis);
+      return r;
+    }
+  }
+  free_analysis(&analysis);
+  return APP_OK;
 }
