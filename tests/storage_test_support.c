@@ -19,7 +19,7 @@
 void test_temp_dir(char *out, const size_t capacity) {
 #ifdef _WIN32
   wchar_t base[MAX_PATH], path[MAX_PATH];
-  DWORD n = GetTempPathW(MAX_PATH, base);
+  const DWORD n = GetTempPathW(MAX_PATH, base);
   REQUIRE(n && n < MAX_PATH);
   REQUIRE(GetTempFileNameW(base, L"ccm", 0, path));
   REQUIRE(DeleteFileW(path));
@@ -35,16 +35,45 @@ void test_temp_dir(char *out, const size_t capacity) {
 
 void test_remove_directory(const char *path) {
 #ifdef _WIN32
-  wchar_t wide[4096];
-  REQUIRE(
-      MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, wide, 4096));
-  REQUIRE(RemoveDirectoryW(wide));
+  const int count =
+      MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, nullptr, 0);
+  REQUIRE(count > 0);
+  wchar_t *input = malloc((size_t)count * sizeof(*input));
+  REQUIRE(input);
+  REQUIRE(MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, input,
+                              count));
+
+  const DWORD needed = GetFullPathNameW(input, 0, nullptr, nullptr);
+  REQUIRE(needed > 0);
+  wchar_t *absolute = malloc((size_t)needed * sizeof(*absolute));
+  REQUIRE(absolute);
+  REQUIRE(GetFullPathNameW(input, needed, absolute, nullptr) < needed);
+  free(input);
+  for (wchar_t *p = absolute; *p; p++)
+    if (*p == L'/')
+      *p = L'\\';
+
+  const bool unc = absolute[0] == L'\\' && absolute[1] == L'\\';
+  const wchar_t *prefix = unc ? L"\\\\?\\UNC\\" : L"\\\\?\\";
+  const wchar_t *body = unc ? absolute + 2 : absolute;
+  const size_t prefix_length = wcslen(prefix);
+  const size_t body_length = wcslen(body);
+  wchar_t *extended =
+      malloc((prefix_length + body_length + 1) * sizeof(*extended));
+  REQUIRE(extended);
+  memcpy(extended, prefix, prefix_length * sizeof(*extended));
+  memcpy(extended + prefix_length, body,
+         (body_length + 1) * sizeof(*extended));
+  free(absolute);
+
+  REQUIRE(RemoveDirectoryW(extended));
+  free(extended);
 #else
   REQUIRE(rmdir(path) == 0);
 #endif
 }
 
-static AppResult test_remove_entry(const char *name, FileAccessKind kind,
+static AppResult test_remove_entry(const char *name, const FileAccessKind kind,
                                    void *context) {
   char path[4096];
   REQUIRE(file_access_join(context, name, path, sizeof(path)) == APP_OK);

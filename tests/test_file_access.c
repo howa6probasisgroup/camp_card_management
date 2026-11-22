@@ -129,6 +129,31 @@ int main() {
   REQUIRE(file_access_visit_directory(root, nullptr, nullptr) ==
           APP_ERR_INVALID_ARGUMENT);
   file_access_free(nullptr);
+
+  // 嵌套路径超过传统 Windows MAX_PATH 限制时，文件访问接口仍应正常工作。
+  char long_dir[4096], long_next[4096], long_file[4096];
+  char long_component[81];
+  memset(long_component, 'l', sizeof(long_component) - 1);
+  long_component[sizeof(long_component) - 1] = '\0';
+  strcpy(long_dir, root);
+  for (size_t i = 0; i < 4; i++) {
+    REQUIRE(file_access_join(long_dir, long_component, long_next,
+                             sizeof(long_next)) == APP_OK);
+    strcpy(long_dir, long_next);
+  }
+  REQUIRE(file_access_make_directories(long_dir) == APP_OK);
+  REQUIRE(file_access_join(long_dir, "long.bin", long_file,
+                           sizeof(long_file)) == APP_OK);
+  constexpr char payload[] = "long path";
+  REQUIRE(file_access_write(long_file, payload, sizeof(payload)) == APP_OK);
+  data = nullptr;
+  size = 0;
+  REQUIRE(file_access_read(long_file, &data, &size) == APP_OK &&
+          size == sizeof(payload) && !memcmp(data, payload, size));
+  file_access_free(data);
+  REQUIRE(file_access_remove(long_file) == APP_OK);
+  test_remove_tree(long_dir);
+
   test_remove_tree(root);
   puts("test_file_access: passed");
   return 0;

@@ -10,7 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
-#include <wchar.h>
 #include <windows.h>
 #else
 #include <dirent.h>
@@ -30,22 +29,67 @@ static bool separator(const char c) {
 #ifdef _WIN32
 /* 公共路径统一为 UTF-8，Windows 文件接口使用 UTF-16。 */
 static AppResult wide_path(const char *path, wchar_t **out) {
-  int n =
+  const int n =
       MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, nullptr, 0);
   if (!n)
     return APP_ERR_INVALID_ARGUMENT;
-  wchar_t *s = malloc((size_t)n * sizeof(*s));
-  if (!s)
+  wchar_t *input = malloc((size_t)n * sizeof(*input));
+  if (!input)
     return APP_ERR_NO_MEMORY;
-  if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, s, n)) {
-    free(s);
+  if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, input, n)) {
+    free(input);
     return APP_ERR_INVALID_ARGUMENT;
   }
-  *out = s;
+
+  const bool extended =
+      !wcsncmp(input, L"\\\\?\\", 4) || !wcsncmp(input, L"\\\\.\\", 4);
+  wchar_t *absolute = input;
+  if (!extended) {
+    const DWORD needed = GetFullPathNameW(input, 0, nullptr, nullptr);
+    if (!needed) {
+      free(input);
+      return APP_ERR_INVALID_ARGUMENT;
+    }
+    absolute = malloc((size_t)needed * sizeof(*absolute));
+    if (!absolute) {
+      free(input);
+      return APP_ERR_NO_MEMORY;
+    }
+    const DWORD written = GetFullPathNameW(input, needed, absolute, nullptr);
+    free(input);
+    if (!written || written >= needed) {
+      free(absolute);
+      return APP_ERR_INVALID_ARGUMENT;
+    }
+  }
+  for (wchar_t *p = absolute; *p; p++)
+    if (*p == L'/')
+      *p = L'\\';
+
+  if (extended) {
+    *out = absolute;
+    return APP_OK;
+  }
+
+  const bool unc = absolute[0] == L'\\' && absolute[1] == L'\\';
+  const wchar_t *prefix = unc ? L"\\\\?\\UNC\\" : L"\\\\?\\";
+  const wchar_t *body = unc ? absolute + 2 : absolute;
+  const size_t prefix_length = wcslen(prefix);
+  const size_t body_length = wcslen(body);
+  wchar_t *result =
+      malloc((prefix_length + body_length + 1) * sizeof(*result));
+  if (!result) {
+    free(absolute);
+    return APP_ERR_NO_MEMORY;
+  }
+  memcpy(result, prefix, prefix_length * sizeof(*result));
+  memcpy(result + prefix_length, body, (body_length + 1) * sizeof(*result));
+  free(absolute);
+  *out = result;
   return APP_OK;
 }
 
-static AppResult windows_error(DWORD e) {
+static AppResult windows_error(const DWORD e) {
   return e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND
              ? APP_ERR_NOT_FOUND
              : APP_ERR_IO;
@@ -58,11 +102,11 @@ AppResult file_access_kind(const char *path, FileAccessKind *out) {
   FileAccessKind kind;
 #ifdef _WIN32
   wchar_t *wide;
-  AppResult r = wide_path(path, &wide);
+  const AppResult r = wide_path(path, &wide);
   if (r != APP_OK)
     return r;
-  DWORD a = GetFileAttributesW(wide);
-  DWORD error = GetLastError();
+  const DWORD a = GetFileAttributesW(wide);
+  const DWORD error = GetLastError();
   free(wide);
   if (a == INVALID_FILE_ATTRIBUTES)
     return windows_error(error);
@@ -96,26 +140,26 @@ AppResult file_access_same_directory(const char *first, const char *second,
     free(wide1);
     return r;
   }
-  DWORD a1 = GetFileAttributesW(wide1);
-  DWORD err1 = GetLastError();
+  const DWORD a1 = GetFileAttributesW(wide1);
+  const DWORD err1 = GetLastError();
   if (a1 == INVALID_FILE_ATTRIBUTES) {
     free(wide1);
     free(wide2);
     return windows_error(err1);
   }
-  if ((a1 & FILE_ATTRIBUTE_REPARSE_POINT) || !(a1 & FILE_ATTRIBUTE_DIRECTORY)) {
+  if (a1 & FILE_ATTRIBUTE_REPARSE_POINT || !(a1 & FILE_ATTRIBUTE_DIRECTORY)) {
     free(wide1);
     free(wide2);
     return APP_ERR_INVALID_DATA;
   }
-  DWORD a2 = GetFileAttributesW(wide2);
-  DWORD err2 = GetLastError();
+  const DWORD a2 = GetFileAttributesW(wide2);
+  const DWORD err2 = GetLastError();
   if (a2 == INVALID_FILE_ATTRIBUTES) {
     free(wide1);
     free(wide2);
     return windows_error(err2);
   }
-  if ((a2 & FILE_ATTRIBUTE_REPARSE_POINT) || !(a2 & FILE_ATTRIBUTE_DIRECTORY)) {
+  if (a2 & FILE_ATTRIBUTE_REPARSE_POINT || !(a2 & FILE_ATTRIBUTE_DIRECTORY)) {
     free(wide1);
     free(wide2);
     return APP_ERR_INVALID_DATA;
@@ -146,9 +190,9 @@ AppResult file_access_same_directory(const char *first, const char *second,
   }
   CloseHandle(h1);
   CloseHandle(h2);
-  *out = (fi1.dwVolumeSerialNumber == fi2.dwVolumeSerialNumber &&
-          fi1.nFileIndexHigh == fi2.nFileIndexHigh &&
-          fi1.nFileIndexLow == fi2.nFileIndexLow);
+  *out = fi1.dwVolumeSerialNumber == fi2.dwVolumeSerialNumber &&
+         fi1.nFileIndexHigh == fi2.nFileIndexHigh &&
+         fi1.nFileIndexLow == fi2.nFileIndexLow;
   return APP_OK;
 #else
   struct stat st1;
@@ -178,7 +222,7 @@ static AppResult make_one(const char *path) {
   r = wide_path(path, &wide);
   if (r != APP_OK)
     return r;
-  bool ok = CreateDirectoryW(wide, nullptr) != 0;
+  const bool ok = CreateDirectoryW(wide, nullptr) != 0;
   free(wide);
 #else
   const bool ok = mkdir(path, 0700) == 0;
@@ -266,7 +310,7 @@ AppResult file_access_visit_directory(const char *path,
   if (kind != FILE_ACCESS_DIRECTORY)
     return APP_ERR_IO;
 #ifdef _WIN32
-  size_t n = strlen(path) + 3;
+  const size_t n = strlen(path) + 3;
   char *pattern = malloc(n);
   if (!pattern)
     return APP_ERR_NO_MEMORY;
@@ -285,7 +329,7 @@ AppResult file_access_visit_directory(const char *path,
   do {
     if (!wcscmp(entry.cFileName, L".") || !wcscmp(entry.cFileName, L".."))
       continue;
-    int bytes =
+    const int bytes =
         WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, entry.cFileName, -1,
                             nullptr, 0, nullptr, nullptr);
     if (!bytes) {
@@ -303,7 +347,7 @@ AppResult file_access_visit_directory(const char *path,
       r = APP_ERR_IO;
       break;
     }
-    DWORD a = entry.dwFileAttributes;
+    const DWORD a = entry.dwFileAttributes;
     kind = a & FILE_ATTRIBUTE_REPARSE_POINT ? FILE_ACCESS_OTHER
            : a & FILE_ATTRIBUTE_DIRECTORY   ? FILE_ACCESS_DIRECTORY
                                             : FILE_ACCESS_REGULAR;
@@ -450,8 +494,8 @@ AppResult file_access_remove(const char *path) {
   r = wide_path(path, &wide);
   if (r != APP_OK)
     return r;
-  bool ok = DeleteFileW(wide) != 0;
-  DWORD error = GetLastError();
+  const bool ok = DeleteFileW(wide) != 0;
+  const DWORD error = GetLastError();
   free(wide);
   return ok ? APP_OK : windows_error(error);
 #else

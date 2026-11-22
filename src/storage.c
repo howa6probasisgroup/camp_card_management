@@ -10,6 +10,31 @@ static constexpr char alphabet[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 static const char *roles[] = {"admin", "card_user", "card_clerk"};
 
+/* JSON 输出由本模块分配和释放，避免动态库与可执行文件使用不同 CRT 堆。 */
+static void *json_malloc(void *context, const size_t size) {
+  (void)context;
+  return malloc(size);
+}
+
+static void *json_realloc(void *context, void *pointer,
+                          const size_t old_size, const size_t size) {
+  (void)context;
+  (void)old_size;
+  return realloc(pointer, size);
+}
+
+static void json_free(void *context, void *pointer) {
+  (void)context;
+  free(pointer);
+}
+
+static const yyjson_alc json_allocator = {
+    .malloc = json_malloc,
+    .realloc = json_realloc,
+    .free = json_free,
+    .ctx = nullptr,
+};
+
 static size_t bounded_length(const char *s, const size_t max) {
   size_t n = 0;
   if (!s)
@@ -115,7 +140,7 @@ static bool record_valid(const StudentCardRecord *r) {
 }
 
 static void encode(const char *text, char *out) {
-  const auto s = (const unsigned char *)text;
+  auto const s = (const unsigned char *)text;
   const size_t n = strlen(text);
   size_t k = 0;
   for (size_t i = 0; i < n; i += 3) {
@@ -422,8 +447,8 @@ static AppResult write_document(const char *path, const yyjson_mut_doc *doc,
                                 const bool create_parent) {
   size_t size;
   yyjson_write_err error;
-  char *data =
-      yyjson_mut_write_opts(doc, YYJSON_WRITE_PRETTY, nullptr, &size, &error);
+  char *data = yyjson_mut_write_opts(doc, YYJSON_WRITE_PRETTY, &json_allocator,
+                                     &size, &error);
   if (!data)
     return error.code == YYJSON_WRITE_ERROR_MEMORY_ALLOCATION
                ? APP_ERR_NO_MEMORY
@@ -437,7 +462,7 @@ static AppResult write_document(const char *path, const yyjson_mut_doc *doc,
   }
   if (r == APP_OK)
     r = file_access_write(path, data, size);
-  free(data);
+  json_allocator.free(json_allocator.ctx, data);
   return r;
 }
 
@@ -599,6 +624,7 @@ typedef struct {
   char id[STUDENT_ID_LENGTH + 1];
   StudentList *out;
 } RecordWalk;
+
 static AppResult visit_record(const char *name, const FileAccessKind kind,
                               void *context) {
   const RecordWalk *walk = context;
@@ -927,7 +953,7 @@ static AppResult analyze_name_indexes(NameIndexAnalysis *analysis) {
   }
 
   ActualIndexNode *actual_head = nullptr;
-  ActualCollector col = {names_dir, &actual_head};
+  ActualCollector col = {.dir_path = names_dir, .head = &actual_head};
   r = file_access_visit_directory(names_dir, collect_actual_indexes, &col);
   if (r != APP_OK && r != APP_ERR_NOT_FOUND) {
     while (actual_head) {
