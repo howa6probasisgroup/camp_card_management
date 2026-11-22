@@ -1,8 +1,13 @@
+#include "file_access.h"
 #include "storage.h"
 #include "storage_test_support.h"
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #ifndef _WIN32
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 static Account account() {
@@ -13,6 +18,7 @@ static Account account() {
   memset(a.password_hash_hex, 'b', PASSWORD_HASH_HEX_LENGTH);
   return a;
 }
+
 static StudentCardRecord record() {
   return (StudentCardRecord){.student_id = "251543201",
                              .name = "张三",
@@ -23,20 +29,22 @@ static StudentCardRecord record() {
                              .balance_cents = 1250,
                              .status = CARD_STATUS_ACTIVE};
 }
+
 static void replace_file(const char *path, const char *original,
                          const char *needle, const char *replacement) {
   const char *where = strstr(original, needle);
   REQUIRE(where);
-  size_t size = strlen(original) - strlen(needle) + strlen(replacement);
+  const size_t size = strlen(original) - strlen(needle) + strlen(replacement);
   char *changed = malloc(size + 1);
   REQUIRE(changed);
-  size_t prefix = (size_t)(where - original);
+  const size_t prefix = (size_t)(where - original);
   memcpy(changed, original, prefix);
   strcpy(changed + prefix, replacement);
   strcpy(changed + prefix + strlen(replacement), where + strlen(needle));
   REQUIRE(file_access_write(path, changed, size) == APP_OK);
   free(changed);
 }
+
 static void invalid_record_cases(const char *path,
                                  const StudentCardRecord *valid) {
   char *original;
@@ -97,6 +105,7 @@ static void invalid_record_cases(const char *path,
   REQUIRE(file_access_write(path, original, size) == APP_OK);
   free(original);
 }
+
 static void invalid_account_cases(const char *path, const Account *valid) {
   char *original;
   size_t size;
@@ -129,6 +138,7 @@ static void invalid_account_cases(const char *path, const Account *valid) {
   REQUIRE(file_access_write(path, original, size) == APP_OK);
   free(original);
 }
+
 static void test_account_hex_paths_and_case_coexistence(const char *root) {
   Account upper = account(), lower = account(), loaded;
   strcpy(upper.username, "Admin");
@@ -166,7 +176,7 @@ static void test_account_hex_paths_and_case_coexistence(const char *root) {
           !strcmp(loaded.username, "Admin"));
   REQUIRE(storage_account_delete("Admin") == APP_OK);
 
-  /* 验证文件内用户名与路径主键不符时，禁止读取、覆盖或删除。 */
+  // 验证文件内用户名与路径主键不符时，禁止读取、覆盖或删除。
   strcpy(lower.username, "testuser");
   REQUIRE(storage_account_save(&lower) == APP_OK);
   char test_file[4096];
@@ -200,7 +210,17 @@ static void test_name_index_check_and_repair(const char *root) {
   REQUIRE(storage_record_save(&extra) == APP_OK);
   REQUIRE(storage_name_index_check(&report) == APP_OK);
   REQUIRE(report.missing == 1);
-  size_t prev_stale = report.stale;
+  const size_t prev_stale = report.stale;
+
+  char noncanonical_dir[4096], noncanonical_path[4096];
+  test_path(root, "indexes/name/backup", noncanonical_dir,
+            sizeof(noncanonical_dir));
+  REQUIRE(file_access_make_directories(noncanonical_dir) == APP_OK);
+  test_path(root, "indexes/name/backup/251543299", noncanonical_path,
+            sizeof(noncanonical_path));
+  REQUIRE(file_access_write(noncanonical_path, nullptr, 0) == APP_OK);
+  REQUIRE(storage_name_index_check(&report) == APP_OK);
+  REQUIRE(report.missing == 1 && report.stale == prev_stale);
 
   char stale_path[4096];
   test_path(root, "indexes/name/5b/yg/5L/iJ/251543299", stale_path,
@@ -244,6 +264,10 @@ static void test_name_index_check_and_repair(const char *root) {
   file_access_free(cdata);
 
   REQUIRE(file_access_kind(stale_path, &kind) == APP_ERR_NOT_FOUND);
+  REQUIRE(file_access_kind(noncanonical_path, &kind) == APP_OK &&
+          kind == FILE_ACCESS_REGULAR);
+  REQUIRE(file_access_remove(noncanonical_path) == APP_OK);
+  test_remove_directory(noncanonical_dir);
 
   test_path(root, "students/25/15/43/2/09.json", extra_rec_path,
             sizeof(extra_rec_path));
@@ -287,7 +311,8 @@ int main() {
   student_list_clear(&students);
   REQUIRE(storage_record_list(&students) == APP_OK && students.size == 2);
   student_list_clear(&students);
-  Account user = account(), admin = account();
+  const Account user = account();
+  Account admin = account();
   strcpy(admin.username, "admin");
   admin.role = ROLE_ADMIN;
   admin.student_id[0] = '\0';
@@ -314,7 +339,7 @@ int main() {
   free(content);
   invalid_record_cases(record_file, &a);
   invalid_account_cases(account_file, &user);
-  /* 非规范路径不参与列表，合法路径中的损坏记录必须报错。 */
+  // 非规范路径不参与列表，合法路径中的损坏记录必须报错。
   test_path(root, "accounts/not_hex.json", path, sizeof(path));
   REQUIRE(file_access_write(path, "broken", 6) == APP_OK);
   REQUIRE(storage_account_count(&count) == APP_OK && count == 2);
@@ -322,9 +347,8 @@ int main() {
   REQUIRE(file_access_write(path, "broken", 6) == APP_OK);
   REQUIRE(storage_record_list(&students) == APP_OK && students.size == 2);
   student_list_clear(&students);
-  /* 同名的失效索引和姓名不符的主记录只跳过；损坏主记录不跳过。 */
-  REQUIRE(storage_name_index_append(a.name, "999999999") ==
-          APP_ERR_NOT_FOUND);
+  // 同名的失效索引和姓名不符的主记录只跳过；损坏主记录不跳过。
+  REQUIRE(storage_name_index_append(a.name, "999999999") == APP_ERR_NOT_FOUND);
   REQUIRE(storage_name_index_append("李四", a.student_id) ==
           APP_ERR_INVALID_ARGUMENT);
   test_path(root, "indexes/name/5b/yg/5L/iJ/999999999", path, sizeof(path));
@@ -359,7 +383,7 @@ int main() {
   REQUIRE(storage_record_find_by_name(a.name, &students) == APP_OK &&
           students.size == 1);
   student_list_clear(&students);
-  /* 编码末级只有一个字符时仍能定位；姓名目录同名文件应报告 IO。 */
+  // 编码末级只有一个字符时仍能定位；姓名目录同名文件应报告 IO。
   strcpy(b.name, "ab");
   REQUIRE(storage_record_save(&b) == APP_OK);
   REQUIRE(storage_name_index_append(b.name, b.student_id) == APP_OK);
@@ -376,13 +400,13 @@ int main() {
           students.size == 0);
   REQUIRE(file_access_remove(path) == APP_OK);
   REQUIRE(storage_name_index_append(b.name, b.student_id) == APP_OK);
-  /* 主记录的直接定位不因其他记录损坏而退化成全表扫描。 */
+  // 主记录的直接定位不因其他记录损坏而退化成全表扫描。
   test_path(root, "students/25/15/43/2/02.json", path, sizeof(path));
   REQUIRE(file_access_write(path, "{}", 2) == APP_OK);
   REQUIRE(storage_record_load(a.student_id, &loaded) == APP_OK);
   REQUIRE(storage_record_save(&b) == APP_OK);
 
-  /* 最大余额和字符串、冻结状态及不同角色往返。 */
+  // 最大余额和字符串、冻结状态及不同角色往返。
   a.balance_cents = INT64_MAX;
   a.status = CARD_STATUS_FROZEN;
   memset(a.name, 'n', NAME_MAX_BYTES);
@@ -439,7 +463,7 @@ int main() {
   }
 #endif
   test_name_index_check_and_repair(root);
-  /* 初始化后根目录缺失不能误判成零账号或被保存操作悄悄重建。 */
+  // 初始化后根目录缺失不能误判成零账号或被保存操作悄悄重建。
   test_path(root, "accounts", path, sizeof(path));
   test_remove_tree(path);
   count = 999;

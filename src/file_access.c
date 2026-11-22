@@ -19,7 +19,7 @@
 #include <unistd.h>
 #endif
 
-static bool separator(char c) {
+static bool separator(const char c) {
 #ifdef _WIN32
   return c == '/' || c == '\\';
 #else
@@ -44,6 +44,7 @@ static AppResult wide_path(const char *path, wchar_t **out) {
   *out = s;
   return APP_OK;
 }
+
 static AppResult windows_error(DWORD e) {
   return e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND
              ? APP_ERR_NOT_FOUND
@@ -119,19 +120,17 @@ AppResult file_access_same_directory(const char *first, const char *second,
     free(wide2);
     return APP_ERR_INVALID_DATA;
   }
-  HANDLE h1 = CreateFileW(wide1, 0,
-                          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                          nullptr, OPEN_EXISTING,
-                          FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+  HANDLE h1 = CreateFileW(
+      wide1, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+      OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
   free(wide1);
   if (h1 == INVALID_HANDLE_VALUE) {
     free(wide2);
     return APP_ERR_IO;
   }
-  HANDLE h2 = CreateFileW(wide2, 0,
-                          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                          nullptr, OPEN_EXISTING,
-                          FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+  HANDLE h2 = CreateFileW(
+      wide2, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+      OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
   free(wide2);
   if (h2 == INVALID_HANDLE_VALUE) {
     CloseHandle(h1);
@@ -162,7 +161,7 @@ AppResult file_access_same_directory(const char *first, const char *second,
     return errno == ENOENT ? APP_ERR_NOT_FOUND : APP_ERR_IO;
   if (!S_ISDIR(st2.st_mode))
     return APP_ERR_INVALID_DATA;
-  *out = (st1.st_dev == st2.st_dev && st1.st_ino == st2.st_ino);
+  *out = st1.st_dev == st2.st_dev && st1.st_ino == st2.st_ino;
   return APP_OK;
 #endif
 }
@@ -182,7 +181,7 @@ static AppResult make_one(const char *path) {
   bool ok = CreateDirectoryW(wide, nullptr) != 0;
   free(wide);
 #else
-  bool ok = mkdir(path, 0700) == 0;
+  const bool ok = mkdir(path, 0700) == 0;
 #endif
   if (ok)
     return APP_OK;
@@ -215,7 +214,7 @@ AppResult file_access_make_directories(const char *path) {
     if (cut == 2 && copy[1] == ':')
       cut = 3;
 #endif
-    char saved = copy[cut];
+    const char saved = copy[cut];
     copy[cut] = '\0';
     r = cut < n ? file_access_make_directories(copy) : APP_ERR_IO;
     copy[cut] = saved;
@@ -227,20 +226,23 @@ AppResult file_access_make_directories(const char *path) {
   return r;
 }
 
-static bool overlaps(const void *a, size_t an, const void *b, size_t bn) {
-  uintptr_t x = (uintptr_t)a, y = (uintptr_t)b;
+static bool overlaps(const void *a, const size_t an, const void *b,
+                     const size_t bn) {
+  const uintptr_t x = (uintptr_t)a;
+  const uintptr_t y = (uintptr_t)b;
   return x <= y ? y - x < an : x - y < bn;
 }
 
 AppResult file_access_join(const char *directory, const char *component,
-                           char *out, size_t capacity) {
+                           char *out, const size_t capacity) {
   if (!directory || !component || !out || !*directory || !*component ||
       strchr(component, '/') || strchr(component, '\\') ||
       strchr(component, ':') || !strcmp(component, ".") ||
       !strcmp(component, ".."))
     return APP_ERR_INVALID_ARGUMENT;
-  size_t a = strlen(directory), b = strlen(component);
-  size_t slash = separator(directory[a - 1]) ? 0 : 1;
+  const size_t a = strlen(directory);
+  const size_t b = strlen(component);
+  const size_t slash = separator(directory[a - 1]) ? 0 : 1;
   if (a > SIZE_MAX - b - 2 || capacity < a + slash + b + 1 ||
       overlaps(out, capacity, directory, a + 1) ||
       overlaps(out, capacity, component, b + 1))
@@ -253,7 +255,7 @@ AppResult file_access_join(const char *directory, const char *component,
 }
 
 AppResult file_access_visit_directory(const char *path,
-                                      FileAccessVisitor visitor,
+                                      const FileAccessVisitor visitor,
                                       void *context) {
   if (!path || !*path || !visitor)
     return APP_ERR_INVALID_ARGUMENT;
@@ -347,7 +349,7 @@ AppResult file_access_visit_directory(const char *path,
   return r;
 }
 
-static AppResult open_file(const char *path, bool write, FILE **out) {
+static AppResult open_file(const char *path, const bool write, FILE **out) {
   FileAccessKind kind;
   AppResult r = file_access_kind(path, &kind);
   if (r == APP_OK && kind != FILE_ACCESS_REGULAR)
@@ -383,7 +385,7 @@ AppResult file_access_read(const char *path, char **out_data,
   if (!data)
     r = APP_ERR_NO_MEMORY;
   while (r == APP_OK) {
-    size_t count = fread(data + size, 1, capacity - size - 1, file);
+    const size_t count = fread(data + size, 1, capacity - size - 1, file);
     size += count;
     if (ferror(file)) {
       r = APP_ERR_IO;
@@ -419,7 +421,8 @@ AppResult file_access_read(const char *path, char **out_data,
 
 void file_access_free(void *data) { free(data); }
 
-AppResult file_access_write(const char *path, const void *data, size_t size) {
+AppResult file_access_write(const char *path, const void *data,
+                            const size_t size) {
   if (!path || !*path || (!data && size))
     return APP_ERR_INVALID_ARGUMENT;
   FILE *file;

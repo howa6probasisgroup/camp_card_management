@@ -1,8 +1,11 @@
+#include "file_access.h"
 #include "services/account_service.h"
 #include "services/auth_service.h"
 #include "services/card_service.h"
 #include "storage.h"
 #include "storage_test_support.h"
+#include <stdio.h>
+#include <string.h>
 
 /* 链接真实文件存储与密码模块，覆盖跨模块调用和关闭后重新读取。 */
 int main() {
@@ -19,12 +22,12 @@ int main() {
   REQUIRE(account_create(&admin, "clerk", "demo-pass-123", ROLE_CARD_CLERK,
                          "") == APP_OK);
   REQUIRE(auth_login("clerk", "demo-pass-123", &clerk) == APP_OK);
-  StudentProfileInput profile = {.student_id = "251543201",
-                                 .name = "示例学生",
-                                 .sex = "其他",
-                                 .department = "示例学院",
-                                 .class_name = "示例班",
-                                 .phone = ""};
+  const StudentProfileInput profile = {.student_id = "251543201",
+                                       .name = "示例学生",
+                                       .sex = "其他",
+                                       .department = "示例学院",
+                                       .class_name = "示例班",
+                                       .phone = ""};
   REQUIRE(card_issue(&clerk, &profile) == APP_OK);
   REQUIRE(card_issue(&clerk, &profile) == APP_ERR_ALREADY_EXISTS);
   REQUIRE(account_create(&admin, "student", "demo-pass-123", ROLE_CARD_USER,
@@ -62,7 +65,7 @@ int main() {
   REQUIRE(account_delete(&admin, "student") == APP_OK);
   REQUIRE(storage_record_load(profile.student_id, &record) == APP_OK &&
           record.balance_cents == 0);
-  /* 大小写不同的用户名共存且不会相互影响。 */
+  // 大小写不同的用户名共存且不会相互影响。
   REQUIRE(account_create(&admin, "aaa", "demo-pass-123", ROLE_ADMIN, "") ==
           APP_OK);
   REQUIRE(account_create(&admin, "aaG", "demo-pass-123", ROLE_ADMIN, "") ==
@@ -72,7 +75,8 @@ int main() {
   REQUIRE(auth_login("aaG", "demo-pass-123", &aag_admin) == APP_OK);
   REQUIRE(account_delete(&aaa_admin, "aaG") == APP_OK);
   REQUIRE(auth_login("aaa", "demo-pass-123", &aaa_admin) == APP_OK);
-  REQUIRE(auth_login("aaG", "demo-pass-123", &aag_admin) == APP_ERR_AUTH_FAILED);
+  REQUIRE(auth_login("aaG", "demo-pass-123", &aag_admin) ==
+          APP_ERR_AUTH_FAILED);
   REQUIRE(account_delete(&admin, "aaa") == APP_OK);
   test_path(root, "accounts/61646d696e.json", path, sizeof(path));
   REQUIRE(file_access_write(path, "{}", 2) == APP_OK);

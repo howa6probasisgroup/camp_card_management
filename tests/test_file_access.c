@@ -1,8 +1,13 @@
+#include "file_access.h"
 #include "storage_test_support.h"
+#include <stdio.h>
+#include <string.h>
 #ifndef _WIN32
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
-static AppResult count_entry(const char *name, FileAccessKind kind,
+
+static AppResult count_entry(const char *name, const FileAccessKind kind,
                              void *context) {
   REQUIRE(strcmp(name, ".") != 0 && strcmp(name, "..") != 0);
   REQUIRE(!strchr(name, '/'));
@@ -11,13 +16,15 @@ static AppResult count_entry(const char *name, FileAccessKind kind,
   (*(size_t *)context)++;
   return APP_OK;
 }
-static AppResult stop_entry(const char *name, FileAccessKind kind,
+
+static AppResult stop_entry(const char *name, const FileAccessKind kind,
                             void *context) {
   (void)name;
   (void)kind;
   (*(size_t *)context)++;
   return APP_ERR_INVALID_DATA;
 }
+
 int main() {
   char root[4096], path[4096], nested[4096];
   test_temp_dir(root, sizeof(root));

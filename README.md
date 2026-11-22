@@ -39,7 +39,7 @@ ctest --test-dir build --output-on-failure
 
 首次配置由 vcpkg 根据清单准备依赖，需要网络和正常工具缓存的访问权限。使用全新的构建目录；旧目录若缓存了关闭的清单模式，使用 CMake 的 `--fresh` 重新配置。依赖安装完成不代表业务功能已经实现。
 
-CLI、业务服务与真实文件存储已接入。正式入口默认按 `storage_init`、`cli_run`、`storage_shutdown` 的顺序管理生命周期；首次启动通过 CLI 创建管理员。设置 `-DCAMP_CARD_BACKEND_READY=OFF` 可禁用正式入口。
+程序入口使用 CLI、业务服务与真实文件存储，并按 `storage_init`、`cli_run`、`storage_shutdown` 的顺序管理生命周期；首次启动通过 CLI 创建管理员。
 
 文件访问、存储及真实业务联调测试使用独立临时目录，测试与交接说明见 [存储验证](docs/storage-testing.md)。
 

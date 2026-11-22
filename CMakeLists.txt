@@ -28,24 +28,15 @@ add_library(camp_card_services STATIC
 target_link_libraries(camp_card_services PUBLIC camp_card_core)
 
 add_executable(camp_card_management main.c)
-target_link_libraries(camp_card_management PRIVATE camp_card_core)
 
 # CLI 库独立编译，便于分别检查菜单代码和业务服务。
 add_library(camp_card_cli STATIC
     src/cli.c
 )
 target_link_libraries(camp_card_cli PUBLIC camp_card_core)
-
-# 默认链接真实文件存储；可关闭入口用于单独检查模块。
-option(CAMP_CARD_BACKEND_READY "启用真实存储的正式入口" ON)
-if (CAMP_CARD_BACKEND_READY)
-    target_compile_definitions(camp_card_management PRIVATE CAMP_CARD_BACKEND_READY)
-    target_link_libraries(
-        camp_card_management PRIVATE camp_card_cli camp_card_services
-    )
-else ()
-    message(STATUS "真实后端入口已禁用")
-endif ()
+target_link_libraries(
+    camp_card_management PRIVATE camp_card_cli camp_card_services
+)
 
 if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(camp_card_core PRIVATE -Wall -Wextra -Wpedantic)
@@ -58,7 +49,11 @@ include(CTest)
 
 if (BUILD_TESTING)
     foreach(storage_test IN ITEMS file_access storage storage_services)
-        add_executable(test_${storage_test} tests/test_${storage_test}.c)
+        add_executable(
+            test_${storage_test}
+            tests/test_${storage_test}.c
+            tests/storage_test_support.c
+        )
         target_link_libraries(test_${storage_test} PRIVATE camp_card_services)
         if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
             target_compile_options(test_${storage_test} PRIVATE -Wall -Wextra -Wpedantic)
