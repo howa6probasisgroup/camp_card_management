@@ -9,10 +9,10 @@
 按 [README](../README.md#构建与测试) 配置与构建后，执行：
 
 ```sh
-ctest --test-dir build --output-on-failure -R '^password$'
+ctest --preset dev-debug -R '^password$'
 ```
 
-若使用其他构建目录，将 `build` 替换为该目录。
+使用 Release 构建时，将预设名替换为 `dev-release`。
 
 独立测试聚焦最小与最大密码长度、随机盐、正确及错误密码、非法派生值和固定向量。固定向量检查派生参数，避免只依靠生成与校验互相验证；测试只输出检查数量或失败行号，不输出凭据。
 
