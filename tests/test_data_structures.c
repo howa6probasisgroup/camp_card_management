@@ -34,7 +34,6 @@ static StudentCardRecord make_student(const char *student_id, const char *name,
                                       const int64_t balance_cents,
                                       const CardStatus status) {
   StudentCardRecord record = {0};
-  memset(&record, 0, sizeof record);
   set_text(record.student_id, sizeof record.student_id, student_id);
   set_text(record.name, sizeof record.name, name);
   set_text(record.sex, sizeof record.sex, "男");
