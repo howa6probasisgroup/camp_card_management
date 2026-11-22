@@ -1,0 +1,59 @@
+{
+  "version": 10,
+  "cmakeMinimumRequired": {
+    "major": 4,
+    "minor": 3,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "local-environment",
+      "hidden": true,
+      "environment": {
+        "VCPKG_ROOT": "path/to/vcpkg"
+      }
+    },
+    {
+      "name": "dev-debug",
+      "displayName": "Development Debug",
+      "inherits": [
+        "debug",
+        "compiler",
+        "local-environment"
+      ]
+    },
+    {
+      "name": "dev-release",
+      "displayName": "Development Release",
+      "inherits": [
+        "release",
+        "compiler",
+        "local-environment"
+      ]
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "dev-debug",
+      "configurePreset": "dev-debug",
+      "inherits": "base-build"
+    },
+    {
+      "name": "dev-release",
+      "configurePreset": "dev-release",
+      "inherits": "base-build"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "dev-debug",
+      "configurePreset": "dev-debug",
+      "inherits": "base-test"
+    },
+    {
+      "name": "dev-release",
+      "configurePreset": "dev-release",
+      "inherits": "base-test"
+    }
+  ]
+}

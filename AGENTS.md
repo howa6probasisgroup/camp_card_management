@@ -10,14 +10,16 @@
 
 ## 开发与检查
 
-从项目根目录执行：
+从项目根目录执行。先复制并填写 `CMakeUserPresets.example.json`，在本机环境预设中设置 `VCPKG_ROOT`，并把 `inherits` 中的 `compiler` 占位符替换为平台/编译器基础预设：
 
 ```sh
-cmake -S . -B cmake-build-debug -DCMAKE_C_COMPILER=clang
-cmake --build cmake-build-debug
+cp CMakeUserPresets.example.json CMakeUserPresets.json
+cmake --preset dev-debug
+cmake --build --preset dev-debug
+ctest --preset dev-debug
 ```
 
-需要使用 vcpkg 工具链时，在配置命令中传入本机实际的 `CMAKE_TOOLCHAIN_FILE`，不得将开发者本机绝对路径写进仓库。
+`CMakePresets.json` 只保存共享隐藏基础预设；`CMakeUserPresets.json` 保存本机环境并以多重继承组合公共配置，且不提交。`Debug` 与 `Release` 分别固定使用 `cmake-build-debug`、`cmake-build-release`，把预设名中的 `debug` 换成 `release` 即可检查 Release。不得将开发者本机绝对路径写进仓库。
 
 只修改公共头文件时，逐个检查头文件是否能独立编译：
 

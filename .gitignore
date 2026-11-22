@@ -3,6 +3,7 @@
 /cmake-build-*/
 /vcpkg_installed/
 *.exe
+/CMakeUserPresets.json
 
 # 运行时数据目录
 /data/
