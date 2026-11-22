@@ -33,7 +33,7 @@ static void set_text(char *destination, const size_t capacity,
 static StudentCardRecord make_student(const char *student_id, const char *name,
                                       const int64_t balance_cents,
                                       const CardStatus status) {
-  StudentCardRecord record;
+  StudentCardRecord record = {0};
   memset(&record, 0, sizeof record);
   set_text(record.student_id, sizeof record.student_id, student_id);
   set_text(record.name, sizeof record.name, name);
@@ -48,8 +48,7 @@ static StudentCardRecord make_student(const char *student_id, const char *name,
 
 static Account make_account(const char *username, const UserRole role,
                             const char *student_id) {
-  Account account;
-  memset(&account, 0, sizeof account);
+  Account account = {0};
   set_text(account.username, sizeof account.username, username);
   set_text(account.password_salt_hex, sizeof account.password_salt_hex,
            "00112233445566778899aabbccddeeff");
