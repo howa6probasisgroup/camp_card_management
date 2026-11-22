@@ -15,8 +15,8 @@
 测试目标及注册信息见 [CMakeLists.txt](../CMakeLists.txt)。使用 README 中的依赖与构建步骤，完成构建后运行：
 
 ```sh
-ctest --test-dir build --output-on-failure
-ctest --test-dir build -R '^(file_access|storage|storage_services)$' --output-on-failure
+ctest --preset dev-debug
+ctest --preset dev-debug -R '^(file_access|storage|storage_services)$'
 ```
 
 | 测试 | 验证内容 |

@@ -17,27 +17,32 @@
 
 ## 构建与测试
 
-使用已准备好的 Clang、CMake 和 vcpkg，在终端将 `VCPKG_ROOT` 设为本机 vcpkg 根目录。
+[CMakePresets.json](CMakePresets.json) 保存团队共享的隐藏基础预设：`debug`、`release`、平台编译器配置和 build/test 公共配置。各开发者在本地创建不入库的 `CMakeUserPresets.json`，通过多重继承组合这些预设并填写本机的 `VCPKG_ROOT`。
 
-macOS 或其他支持 POSIX shell 的终端：
+先复制模板：
 
 ```sh
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_MANIFEST_MODE=ON -DCMAKE_C_COMPILER=clang
-cmake --build build
-ctest --test-dir build --output-on-failure
-./build/camp_card_management
+cp CMakeUserPresets.example.json CMakeUserPresets.json
 ```
 
-Windows PowerShell（Clang 与所需构建工具须已在环境中）：
+模板把本机环境和公共配置继承到 `dev-debug`、`dev-release`。将 `local-environment` 中的 `path/to/vcpkg` 改为本机路径，并把两个开发预设 `inherits` 中的 `compiler` 替换为下表中的平台/编译器预设：
 
-```powershell
-cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_MANIFEST_MODE=ON -DCMAKE_C_COMPILER=clang
-cmake --build build
-ctest --test-dir build --output-on-failure
-.\build\camp_card_management.exe
+| 平台或模式 | 预设名 |
+| --- | --- |
+| 构建模式 | `debug`、`release` |
+| MinGW | `windows-mingw` |
+| Clang（MSVC ABI） | `windows-clang` |
+| macOS arm64 | `macos-arm64` |
+| macOS x64 | `macos-x64` |
+
+```sh
+cmake --preset dev-debug
+cmake --build --preset dev-debug
+ctest --preset dev-debug
+./cmake-build-debug/camp_card_management
 ```
 
-首次配置由 vcpkg 根据清单准备依赖，需要网络和正常工具缓存的访问权限。使用全新的构建目录；旧目录若缓存了关闭的清单模式，使用 CMake 的 `--fresh` 重新配置。依赖安装完成不代表业务功能已经实现。
+Release 使用 `dev-release` 和 `cmake-build-release`。平台预设使用对应的静态 vcpkg triplet。首次配置由 vcpkg 根据清单准备依赖，需要网络和正常工具缓存的访问权限。需要重建现有构建目录时使用 `cmake --fresh --preset dev-debug` 或 `dev-release`。
 
 程序入口使用 CLI、业务服务与真实文件存储，并按 `storage_init`、`cli_run`、`storage_shutdown` 的顺序管理生命周期；首次启动通过 CLI 创建管理员。
 
