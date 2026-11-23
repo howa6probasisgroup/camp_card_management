@@ -44,7 +44,9 @@ ctest --preset dev-debug
 
 Release 使用 `dev-release` 和 `cmake-build-release`。平台预设使用对应的静态 vcpkg triplet。首次配置由 vcpkg 根据清单准备依赖，需要网络和正常工具缓存的访问权限。需要重建现有构建目录时使用 `cmake --fresh --preset dev-debug` 或 `dev-release`。
 
-CLI 与业务服务已经独立编译；真实文件存储尚未接入时，正式入口只提示无法启动，不返回伪造的业务结果。存储实现加入 `camp_card_core` 后，配置时增加 `-DCAMP_CARD_BACKEND_READY=ON` 重新生成，入口会按 `storage_init`、`cli_run`、`storage_shutdown` 的顺序管理生命周期。
+程序入口使用 CLI、业务服务与真实文件存储，并按 `storage_init`、`cli_run`、`storage_shutdown` 的顺序管理生命周期；首次启动通过 CLI 创建管理员。
+
+文件访问、存储及真实业务联调测试使用独立临时目录，测试与交接说明见 [存储验证](docs/storage-testing.md)。
 
 ## 基本契约
 

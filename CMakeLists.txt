@@ -11,6 +11,8 @@ find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
 # 除入口点外的后端源码集中在静态库中，供可执行目标与测试目标共用。
 
 add_library(camp_card_core STATIC
+    src/file_access.c
+    src/storage.c
     src/data_structures.c
     src/password.c
 )
@@ -26,26 +28,15 @@ add_library(camp_card_services STATIC
 target_link_libraries(camp_card_services PUBLIC camp_card_core)
 
 add_executable(camp_card_management main.c)
-target_link_libraries(camp_card_management PRIVATE camp_card_core)
 
-# CLI 库独立编译，便于分别检查菜单代码和业务服务。静态库允许保留对
-# 真实存储接口的未解析引用，待存储实现接入后再链接正式入口。
+# CLI 库独立编译，便于分别检查菜单代码和业务服务。
 add_library(camp_card_cli STATIC
     src/cli.c
 )
 target_link_libraries(camp_card_cli PUBLIC camp_card_core)
-
-# 真实存储实现尚未进入本仓库时，入口仍然编译，但明确提示无法启动，
-# 不伪造业务成功。存储实现接入 camp_card_core 后开启该选项即可链接正式入口。
-option(CAMP_CARD_BACKEND_READY "真实存储实现已接入，可链接正式入口" OFF)
-if (CAMP_CARD_BACKEND_READY)
-    target_compile_definitions(camp_card_management PRIVATE CAMP_CARD_BACKEND_READY)
-    target_link_libraries(
-        camp_card_management PRIVATE camp_card_cli camp_card_services
-    )
-else ()
-    message(STATUS "真实存储实现未接入：正式入口只提示不可用")
-endif ()
+target_link_libraries(
+    camp_card_management PRIVATE camp_card_cli camp_card_services
+)
 
 if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(camp_card_core PRIVATE -Wall -Wextra -Wpedantic)
@@ -57,6 +48,19 @@ endif ()
 include(CTest)
 
 if (BUILD_TESTING)
+    foreach(storage_test IN ITEMS file_access storage storage_services)
+        add_executable(
+            test_${storage_test}
+            tests/test_${storage_test}.c
+            tests/storage_test_support.c
+        )
+        target_link_libraries(test_${storage_test} PRIVATE camp_card_services)
+        if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+            target_compile_options(test_${storage_test} PRIVATE -Wall -Wextra -Wpedantic)
+        endif ()
+        add_test(NAME ${storage_test} COMMAND test_${storage_test})
+    endforeach()
+
     add_executable(test_data_structures tests/test_data_structures.c)
     target_link_libraries(test_data_structures PRIVATE camp_card_core)
     if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
