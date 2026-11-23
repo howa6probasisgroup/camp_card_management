@@ -76,8 +76,7 @@ static AppResult wide_path(const char *path, wchar_t **out) {
   const wchar_t *body = unc ? absolute + 2 : absolute;
   const size_t prefix_length = wcslen(prefix);
   const size_t body_length = wcslen(body);
-  wchar_t *result =
-      malloc((prefix_length + body_length + 1) * sizeof(*result));
+  wchar_t *result = malloc((prefix_length + body_length + 1) * sizeof(*result));
   if (!result) {
     free(absolute);
     return APP_ERR_NO_MEMORY;

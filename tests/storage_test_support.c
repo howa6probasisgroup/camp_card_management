@@ -62,8 +62,7 @@ void test_remove_directory(const char *path) {
       malloc((prefix_length + body_length + 1) * sizeof(*extended));
   REQUIRE(extended);
   memcpy(extended, prefix, prefix_length * sizeof(*extended));
-  memcpy(extended + prefix_length, body,
-         (body_length + 1) * sizeof(*extended));
+  memcpy(extended + prefix_length, body, (body_length + 1) * sizeof(*extended));
   free(absolute);
 
   REQUIRE(RemoveDirectoryW(extended));

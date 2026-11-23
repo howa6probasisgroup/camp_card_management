@@ -10,31 +10,6 @@ static constexpr char alphabet[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 static const char *roles[] = {"admin", "card_user", "card_clerk"};
 
-/* JSON 输出由本模块分配和释放，避免动态库与可执行文件使用不同 CRT 堆。 */
-static void *json_malloc(void *context, const size_t size) {
-  (void)context;
-  return malloc(size);
-}
-
-static void *json_realloc(void *context, void *pointer,
-                          const size_t old_size, const size_t size) {
-  (void)context;
-  (void)old_size;
-  return realloc(pointer, size);
-}
-
-static void json_free(void *context, void *pointer) {
-  (void)context;
-  free(pointer);
-}
-
-static const yyjson_alc json_allocator = {
-    .malloc = json_malloc,
-    .realloc = json_realloc,
-    .free = json_free,
-    .ctx = nullptr,
-};
-
 static size_t bounded_length(const char *s, const size_t max) {
   size_t n = 0;
   if (!s)
@@ -447,8 +422,8 @@ static AppResult write_document(const char *path, const yyjson_mut_doc *doc,
                                 const bool create_parent) {
   size_t size;
   yyjson_write_err error;
-  char *data = yyjson_mut_write_opts(doc, YYJSON_WRITE_PRETTY, &json_allocator,
-                                     &size, &error);
+  char *data =
+      yyjson_mut_write_opts(doc, YYJSON_WRITE_PRETTY, nullptr, &size, &error);
   if (!data)
     return error.code == YYJSON_WRITE_ERROR_MEMORY_ALLOCATION
                ? APP_ERR_NO_MEMORY
@@ -462,7 +437,7 @@ static AppResult write_document(const char *path, const yyjson_mut_doc *doc,
   }
   if (r == APP_OK)
     r = file_access_write(path, data, size);
-  json_allocator.free(json_allocator.ctx, data);
+  free(data);
   return r;
 }
 
