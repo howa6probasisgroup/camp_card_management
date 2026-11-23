@@ -92,7 +92,7 @@ int main() {
   REQUIRE(file_access_read(nested, &data, &size) == APP_ERR_IO &&
           data == output && size == 99);
 #ifndef _WIN32
-  /* POSIX 目录可包含 Windows 不合法的名称；枚举仍须把名字交给调用方。 */
+  // POSIX 目录可包含 Windows 不合法的名称；枚举仍须把名字交给调用方。
   char odd[4096];
   test_path(nested, "odd:entry", odd, sizeof(odd));
   REQUIRE(file_access_write(odd, nullptr, 0) == APP_OK);
