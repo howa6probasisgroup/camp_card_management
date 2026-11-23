@@ -10,7 +10,12 @@
 #include <string.h>
 
 #ifdef _WIN32
+#include <io.h>
 #include <windows.h>
+#else
+#include <signal.h>
+#include <termios.h>
+#include <unistd.h>
 #endif
 
 /**
@@ -81,6 +86,210 @@ static void secure_clear(void *data, size_t size) {
     size--;
   }
 }
+
+/**
+ * @brief 终端回显控制结果。
+ * @details 输入不是终端时不改变回显；终端回显切换失败时不得继续读取密码。
+ */
+typedef enum {
+  CLI_ECHO_UNAVAILABLE = 0,
+  CLI_ECHO_DISABLED,
+  CLI_ECHO_FAILED
+} CliEchoStatus;
+
+/**
+ * @brief 保存关闭回显前的终端状态。
+ * @details 仅当 `active` 为 true 时保存的状态可用于恢复。
+ */
+typedef struct {
+#ifdef _WIN32
+  HANDLE handle;
+  DWORD original_mode;
+#else
+  struct termios original_mode;
+#endif
+  bool active;
+} CliEchoState;
+
+/**
+ * @brief 判断标准输入是否连接终端。
+ * @details 只有终端输入需要关闭回显；重定向输入和测试桩不操作终端状态。
+ * @return 标准输入连接终端时返回 true，否则返回 false。
+ */
+static bool cli_input_is_terminal() {
+#ifdef _WIN32
+  return _isatty(_fileno(stdin)) != 0;
+#else
+  return isatty(STDIN_FILENO) != 0;
+#endif
+}
+
+/**
+ * @brief 关闭标准输入的终端回显。
+ * @details 仅在标准输入连接终端时操作终端状态；重定向输入或测试桩不涉及
+ *          回显控制。终端状态读取或写入失败时返回 `CLI_ECHO_FAILED`。
+ * @param[out] state 接收恢复终端状态所需的数据。
+ * @return 终端回显控制结果。
+ */
+static CliEchoStatus cli_disable_echo(CliEchoState *state) {
+  if (state == nullptr) {
+    return CLI_ECHO_FAILED;
+  }
+  memset(state, 0, sizeof *state);
+
+#ifdef _WIN32
+  if (!cli_input_is_terminal()) {
+    return CLI_ECHO_UNAVAILABLE;
+  }
+
+  HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+  DWORD mode = 0;
+  if (input == nullptr || input == INVALID_HANDLE_VALUE ||
+      !GetConsoleMode(input, &mode)) {
+    return CLI_ECHO_FAILED;
+  }
+  if (!SetConsoleMode(input, mode & ~ENABLE_ECHO_INPUT)) {
+    return CLI_ECHO_FAILED;
+  }
+
+  state->handle = input;
+  state->original_mode = mode;
+  state->active = true;
+  return CLI_ECHO_DISABLED;
+#else
+  if (!cli_input_is_terminal()) {
+    return CLI_ECHO_UNAVAILABLE;
+  }
+
+  struct termios mode;
+  if (tcgetattr(STDIN_FILENO, &mode) != 0) {
+    return CLI_ECHO_FAILED;
+  }
+
+  struct termios no_echo = mode;
+  no_echo.c_lflag &= ~(tcflag_t)ECHO;
+  if (tcsetattr(STDIN_FILENO, TCSANOW, &no_echo) != 0) {
+    return CLI_ECHO_FAILED;
+  }
+
+  state->original_mode = mode;
+  state->active = true;
+  return CLI_ECHO_DISABLED;
+#endif
+}
+
+/**
+ * @brief 恢复标准输入的终端回显状态。
+ * @details 只恢复先前成功关闭过回显的终端；状态恢复失败时返回 false。
+ * @param[in,out] state 恢复后清除活动标记的终端状态。
+ * @return 成功恢复或无需恢复时返回 true，否则返回 false。
+ */
+static bool cli_restore_echo(CliEchoState *state) {
+  if (state == nullptr || !state->active) {
+    return true;
+  }
+
+  bool restored;
+#ifdef _WIN32
+  restored = SetConsoleMode(state->handle, state->original_mode) != 0;
+#else
+  restored = tcsetattr(STDIN_FILENO, TCSANOW, &state->original_mode) == 0;
+#endif
+  state->active = false;
+  return restored;
+}
+
+#ifndef _WIN32
+/**
+ * @brief 密码输入期间需要恢复终端回显的信号数量。
+ * @details 覆盖常见的可中断终止信号；忽略信号和自定义处理器的原有语义在
+ *          读取结束后恢复。
+ */
+enum { CLI_ECHO_SIGNAL_COUNT = 4 };
+
+/**
+ * @brief 保存密码输入期间替换的信号处理器。
+ * @details 只保存实际安装的信号，重放信号前先恢复全部原处理器。
+ */
+typedef struct {
+  struct sigaction previous_actions[CLI_ECHO_SIGNAL_COUNT];
+  int signals[CLI_ECHO_SIGNAL_COUNT];
+  size_t count;
+} CliSignalGuard;
+
+static volatile sig_atomic_t cli_pending_signal = 0;
+
+/**
+ * @brief 记录中断密码读取的信号。
+ * @details 处理器只写入 `sig_atomic_t`，终端状态由正常的读取清理路径恢复。
+ * @param signal_number 收到的信号编号。
+ */
+static void cli_signal_handler(const int signal_number) {
+  cli_pending_signal = signal_number;
+}
+
+/**
+ * @brief 恢复密码输入前的信号处理器。
+ * @param[in,out] guard 保存信号处理器的状态。
+ * @return 全部恢复时返回 true，否则返回 false。
+ */
+static bool cli_restore_signal_guard(CliSignalGuard *guard) {
+  if (guard == nullptr) {
+    return false;
+  }
+
+  bool restored = true;
+  for (size_t i = 0; i < guard->count; i++) {
+    if (sigaction(guard->signals[i], &guard->previous_actions[i], nullptr) !=
+        0) {
+      restored = false;
+    }
+  }
+  guard->count = 0;
+  return restored;
+}
+
+/**
+ * @brief 为密码输入临时安装不自动重启读取的信号处理器。
+ * @details 原始处理器为 `SIG_IGN` 的信号保持不变。收到信号后，读取路径
+ *          恢复回显与处理器，再通过 `raise` 重放原信号。
+ * @param[out] guard 接收待恢复的处理器状态。
+ * @return 安装成功时返回 true，否则返回 false。
+ */
+static bool cli_install_signal_guard(CliSignalGuard *guard) {
+  if (guard == nullptr) {
+    return false;
+  }
+  memset(guard, 0, sizeof *guard);
+  cli_pending_signal = 0;
+
+  struct sigaction action = {.sa_handler = cli_signal_handler};
+  if (sigemptyset(&action.sa_mask) != 0) {
+    return false;
+  }
+  action.sa_flags = 0;
+
+  static constexpr int signals[] = {SIGINT, SIGTERM, SIGHUP, SIGQUIT};
+  for (size_t i = 0; i < sizeof signals / sizeof signals[0]; i++) {
+    struct sigaction previous;
+    if (sigaction(signals[i], nullptr, &previous) != 0) {
+      (void)cli_restore_signal_guard(guard);
+      return false;
+    }
+    if (previous.sa_handler == SIG_IGN) {
+      continue;
+    }
+    if (sigaction(signals[i], &action,
+                  &guard->previous_actions[guard->count]) != 0) {
+      (void)cli_restore_signal_guard(guard);
+      return false;
+    }
+    guard->signals[guard->count] = signals[i];
+    guard->count++;
+  }
+  return true;
+}
+#endif
 
 /**
  * @brief 排空当前行剩余字符。
@@ -372,22 +581,96 @@ static void print_card(const StudentCardRecord *record) {
 /**
  * @brief 提示并读取一行输入。
  * @details 超长输入已在该函数内排空并提示；EOF 与流故障记录到会话状态。
+ *          密码等敏感输入在终端中关闭回显，并在读取结束后恢复终端状态。
  * @param[in,out] input 会话级输入状态。
  * @param[in] label 输出给用户的提示文本。
  * @param[out] out 接收读取内容的缓冲区。
  * @param[in] capacity 输出缓冲区容量。
+ * @param[in] hide_echo 是否在终端输入期间关闭回显。
  * @return 读取结果状态。
  */
-static CliInputStatus prompt_line(CliInput *input, const char *label, char *out,
-                                  const size_t capacity) {
+static CliInputStatus prompt_line_internal(CliInput *input, const char *label,
+                                           char *out, const size_t capacity,
+                                           const bool hide_echo) {
   printf("%s", label);
   if (fflush(stdout) != 0) {
     input->io_error = true;
     return CLI_INPUT_IO;
   }
 
-  CliLine line;
-  if (!cli_read_line(&line)) {
+  CliEchoState echo_state = {0};
+  CliEchoStatus echo_status = CLI_ECHO_UNAVAILABLE;
+#ifndef _WIN32
+  CliSignalGuard signal_guard = {.count = 0};
+  bool signal_guard_active = false;
+  if (hide_echo && cli_input_is_terminal()) {
+    if (!cli_install_signal_guard(&signal_guard)) {
+      input->io_error = true;
+      return CLI_INPUT_IO;
+    }
+    signal_guard_active = true;
+  }
+#endif
+
+  if (hide_echo) {
+    echo_status = cli_disable_echo(&echo_state);
+    if (echo_status == CLI_ECHO_FAILED) {
+#ifndef _WIN32
+      if (signal_guard_active) {
+        (void)cli_restore_signal_guard(&signal_guard);
+      }
+#endif
+      input->io_error = true;
+      return CLI_INPUT_IO;
+    }
+  }
+
+  CliLine line = {0};
+  bool has_line = false;
+  bool echo_restored = true;
+  bool signal_restored = true;
+  bool newline_written = true;
+#ifndef _WIN32
+  sig_atomic_t interrupted_signal = cli_pending_signal;
+  cli_pending_signal = 0;
+  if (interrupted_signal == 0) {
+    has_line = cli_read_line(&line);
+  }
+#else
+  has_line = cli_read_line(&line);
+#endif
+
+  if (echo_status == CLI_ECHO_DISABLED) {
+    echo_restored = cli_restore_echo(&echo_state);
+    newline_written = printf("\n") != EOF;
+  }
+
+#ifndef _WIN32
+  if (signal_guard_active) {
+    signal_restored = cli_restore_signal_guard(&signal_guard);
+    if (interrupted_signal == 0) {
+      interrupted_signal = cli_pending_signal;
+    }
+    cli_pending_signal = 0;
+  }
+  if (interrupted_signal != 0) {
+    if (signal_restored) {
+      (void)raise(interrupted_signal);
+    }
+    input->io_error = true;
+    secure_clear(line.buffer, sizeof line.buffer);
+    return CLI_INPUT_IO;
+  }
+#endif
+
+  if (!signal_restored || !echo_restored || !newline_written) {
+    input->io_error = true;
+    secure_clear(line.buffer, sizeof line.buffer);
+    return CLI_INPUT_IO;
+  }
+
+  if (!has_line) {
+    secure_clear(line.buffer, sizeof line.buffer);
     if (line.io_error) {
       input->io_error = true;
       return CLI_INPUT_IO;
@@ -413,6 +696,34 @@ static CliInputStatus prompt_line(CliInput *input, const char *label, char *out,
   }
   secure_clear(line.buffer, sizeof line.buffer);
   return status;
+}
+
+/**
+ * @brief 提示并读取普通一行输入。
+ * @details 使用正常终端回显，适用于用户名和业务字段。
+ * @param[in,out] input 会话级输入状态。
+ * @param[in] label 输出给用户的提示文本。
+ * @param[out] out 接收读取内容的缓冲区。
+ * @param[in] capacity 输出缓冲区容量。
+ * @return 读取结果状态。
+ */
+static CliInputStatus prompt_line(CliInput *input, const char *label, char *out,
+                                  const size_t capacity) {
+  return prompt_line_internal(input, label, out, capacity, false);
+}
+
+/**
+ * @brief 提示并读取密码输入。
+ * @details 在终端中关闭回显，读取完成或失败后恢复终端状态。
+ * @param[in,out] input 会话级输入状态。
+ * @param[in] label 输出给用户的提示文本。
+ * @param[out] out 接收读取内容的缓冲区。
+ * @param[in] capacity 输出缓冲区容量。
+ * @return 读取结果状态。
+ */
+static CliInputStatus prompt_secret_line(CliInput *input, const char *label,
+                                         char *out, const size_t capacity) {
+  return prompt_line_internal(input, label, out, capacity, true);
 }
 
 /**
@@ -464,10 +775,10 @@ static AppResult run_bootstrap(CliInput *input) {
     CliInputStatus status =
         prompt_line(input, "管理员用户名：", username, sizeof username);
     if (status == CLI_INPUT_OK) {
-      status = prompt_line(input, "密码：", password, sizeof password);
+      status = prompt_secret_line(input, "密码：", password, sizeof password);
     }
     if (status == CLI_INPUT_OK) {
-      status = prompt_line(input, "确认密码：", confirm, sizeof confirm);
+      status = prompt_secret_line(input, "确认密码：", confirm, sizeof confirm);
     }
     if (status == CLI_INPUT_TOO_LONG && !input->eof) {
       continue;
@@ -521,7 +832,7 @@ static AppResult run_login(CliInput *input, Account *session, bool *logged_in) {
   if (status != CLI_INPUT_OK) {
     return status == CLI_INPUT_IO ? APP_ERR_IO : APP_OK;
   }
-  status = prompt_line(input, "密码：", password, sizeof password);
+  status = prompt_secret_line(input, "密码：", password, sizeof password);
   if (status != CLI_INPUT_OK) {
     secure_clear(password, sizeof password);
     return status == CLI_INPUT_IO ? APP_ERR_IO : APP_OK;
@@ -562,6 +873,16 @@ static AppResult run_login(CliInput *input, Account *session, bool *logged_in) {
     }                                                                          \
   } while (0)
 
+#define ASK_SECRET_OR_FINISH(input, label, buffer)                             \
+  do {                                                                         \
+    const CliInputStatus ask_status_ =                                         \
+        prompt_secret_line((input), (label), (buffer), sizeof(buffer));        \
+    if (ask_status_ != CLI_INPUT_OK) {                                         \
+      result = ask_status_ == CLI_INPUT_IO ? APP_ERR_IO : APP_OK;              \
+      goto cleanup;                                                            \
+    }                                                                          \
+  } while (0)
+
 static AppResult handle_admin_create(CliInput *input, const Account *actor) {
   char username[USERNAME_MAX_BYTES + 1] = {0};
   char password[PASSWORD_MAX_BYTES + 1] = {0};
@@ -571,8 +892,8 @@ static AppResult handle_admin_create(CliInput *input, const Account *actor) {
   AppResult result = APP_OK;
 
   ASK_OR_FINISH(input, "新账号用户名：", username);
-  ASK_OR_FINISH(input, "新账号密码：", password);
-  ASK_OR_FINISH(input, "确认密码：", confirm);
+  ASK_SECRET_OR_FINISH(input, "新账号密码：", password);
+  ASK_SECRET_OR_FINISH(input, "确认密码：", confirm);
   if (strcmp(password, confirm) != 0) {
     printf("两次输入的密码不一致，请重新操作。\n");
     goto cleanup;
@@ -681,9 +1002,9 @@ static AppResult handle_change_password(CliInput *input, const Account *actor) {
   char confirm[PASSWORD_MAX_BYTES + 1] = {0};
   AppResult result = APP_OK;
 
-  ASK_OR_FINISH(input, "旧密码：", old_password);
-  ASK_OR_FINISH(input, "新密码：", new_password);
-  ASK_OR_FINISH(input, "确认新密码：", confirm);
+  ASK_SECRET_OR_FINISH(input, "旧密码：", old_password);
+  ASK_SECRET_OR_FINISH(input, "新密码：", new_password);
+  ASK_SECRET_OR_FINISH(input, "确认新密码：", confirm);
   if (strcmp(new_password, confirm) != 0) {
     printf("两次输入的新密码不一致，请重新操作。\n");
     goto cleanup;
@@ -1040,7 +1361,8 @@ static AppResult run_role_menu(CliInput *input, const Account *actor) {
 
 /**
  * @brief 运行未登录菜单。
- * @details 登录后进入角色菜单，退出登录后回到本菜单；选择 `0` 或遇到 EOF 时结束。
+ * @details 登录后进入角色菜单，退出登录后回到本菜单；选择 `0` 或遇到 EOF
+ * 时结束。
  * @param[in,out] input 会话级输入状态。
  * @return 正常退出或 EOF 时返回 `APP_OK`，否则返回对应错误码。
  */
