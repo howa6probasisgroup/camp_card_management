@@ -13,6 +13,7 @@
 #include <io.h>
 #include <windows.h>
 #else
+#include <signal.h>
 #include <termios.h>
 #include <unistd.h>
 #endif
@@ -111,6 +112,19 @@ typedef struct {
 } CliEchoState;
 
 /**
+ * @brief 判断标准输入是否连接终端。
+ * @details 只有终端输入需要关闭回显；重定向输入和测试桩不操作终端状态。
+ * @return 标准输入连接终端时返回 true，否则返回 false。
+ */
+static bool cli_input_is_terminal() {
+#ifdef _WIN32
+  return _isatty(_fileno(stdin)) != 0;
+#else
+  return isatty(STDIN_FILENO) != 0;
+#endif
+}
+
+/**
  * @brief 关闭标准输入的终端回显。
  * @details 仅在标准输入连接终端时操作终端状态；重定向输入或测试桩不涉及
  *          回显控制。终端状态读取或写入失败时返回 `CLI_ECHO_FAILED`。
@@ -124,7 +138,7 @@ static CliEchoStatus cli_disable_echo(CliEchoState *state) {
   memset(state, 0, sizeof *state);
 
 #ifdef _WIN32
-  if (_isatty(_fileno(stdin)) == 0) {
+  if (!cli_input_is_terminal()) {
     return CLI_ECHO_UNAVAILABLE;
   }
 
@@ -143,7 +157,7 @@ static CliEchoStatus cli_disable_echo(CliEchoState *state) {
   state->active = true;
   return CLI_ECHO_DISABLED;
 #else
-  if (isatty(STDIN_FILENO) == 0) {
+  if (!cli_input_is_terminal()) {
     return CLI_ECHO_UNAVAILABLE;
   }
 
@@ -184,6 +198,98 @@ static bool cli_restore_echo(CliEchoState *state) {
   state->active = false;
   return restored;
 }
+
+#ifndef _WIN32
+/**
+ * @brief 密码输入期间需要恢复终端回显的信号数量。
+ * @details 覆盖常见的可中断终止信号；忽略信号和自定义处理器的原有语义在
+ *          读取结束后恢复。
+ */
+enum { CLI_ECHO_SIGNAL_COUNT = 4 };
+
+/**
+ * @brief 保存密码输入期间替换的信号处理器。
+ * @details 只保存实际安装的信号，重放信号前先恢复全部原处理器。
+ */
+typedef struct {
+  struct sigaction previous_actions[CLI_ECHO_SIGNAL_COUNT];
+  int signals[CLI_ECHO_SIGNAL_COUNT];
+  size_t count;
+} CliSignalGuard;
+
+static volatile sig_atomic_t cli_pending_signal = 0;
+
+/**
+ * @brief 记录中断密码读取的信号。
+ * @details 处理器只写入 `sig_atomic_t`，终端状态由正常的读取清理路径恢复。
+ * @param signal_number 收到的信号编号。
+ */
+static void cli_signal_handler(const int signal_number) {
+  cli_pending_signal = signal_number;
+}
+
+/**
+ * @brief 恢复密码输入前的信号处理器。
+ * @param[in,out] guard 保存信号处理器的状态。
+ * @return 全部恢复时返回 true，否则返回 false。
+ */
+static bool cli_restore_signal_guard(CliSignalGuard *guard) {
+  if (guard == nullptr) {
+    return false;
+  }
+
+  bool restored = true;
+  for (size_t i = 0; i < guard->count; i++) {
+    if (sigaction(guard->signals[i], &guard->previous_actions[i], nullptr) !=
+        0) {
+      restored = false;
+    }
+  }
+  guard->count = 0;
+  return restored;
+}
+
+/**
+ * @brief 为密码输入临时安装不自动重启读取的信号处理器。
+ * @details 原始处理器为 `SIG_IGN` 的信号保持不变。收到信号后，读取路径
+ *          恢复回显与处理器，再通过 `raise` 重放原信号。
+ * @param[out] guard 接收待恢复的处理器状态。
+ * @return 安装成功时返回 true，否则返回 false。
+ */
+static bool cli_install_signal_guard(CliSignalGuard *guard) {
+  if (guard == nullptr) {
+    return false;
+  }
+  memset(guard, 0, sizeof *guard);
+  cli_pending_signal = 0;
+
+  struct sigaction action = {.sa_handler = cli_signal_handler};
+  if (sigemptyset(&action.sa_mask) != 0) {
+    return false;
+  }
+  action.sa_flags = 0;
+
+  static constexpr int signals[] = {SIGINT, SIGTERM, SIGHUP, SIGQUIT};
+  for (size_t i = 0; i < sizeof signals / sizeof signals[0]; i++) {
+    struct sigaction previous;
+    if (sigaction(signals[i], nullptr, &previous) != 0) {
+      (void)cli_restore_signal_guard(guard);
+      return false;
+    }
+    if (previous.sa_handler == SIG_IGN) {
+      continue;
+    }
+    if (sigaction(signals[i], &action,
+                  &guard->previous_actions[guard->count]) != 0) {
+      (void)cli_restore_signal_guard(guard);
+      return false;
+    }
+    guard->signals[guard->count] = signals[i];
+    guard->count++;
+  }
+  return true;
+}
+#endif
 
 /**
  * @brief 排空当前行剩余字符。
@@ -494,23 +600,70 @@ static CliInputStatus prompt_line_internal(CliInput *input, const char *label,
 
   CliEchoState echo_state = {0};
   CliEchoStatus echo_status = CLI_ECHO_UNAVAILABLE;
+#ifndef _WIN32
+  CliSignalGuard signal_guard = {.count = 0};
+  bool signal_guard_active = false;
+  if (hide_echo && cli_input_is_terminal()) {
+    if (!cli_install_signal_guard(&signal_guard)) {
+      input->io_error = true;
+      return CLI_INPUT_IO;
+    }
+    signal_guard_active = true;
+  }
+#endif
+
   if (hide_echo) {
     echo_status = cli_disable_echo(&echo_state);
     if (echo_status == CLI_ECHO_FAILED) {
+#ifndef _WIN32
+      if (signal_guard_active) {
+        (void)cli_restore_signal_guard(&signal_guard);
+      }
+#endif
       input->io_error = true;
       return CLI_INPUT_IO;
     }
   }
 
-  CliLine line;
-  const bool has_line = cli_read_line(&line);
+  CliLine line = {0};
+  bool has_line = false;
   bool echo_restored = true;
+  bool signal_restored = true;
   bool newline_written = true;
+#ifndef _WIN32
+  sig_atomic_t interrupted_signal = cli_pending_signal;
+  cli_pending_signal = 0;
+  if (interrupted_signal == 0) {
+    has_line = cli_read_line(&line);
+  }
+#else
+  has_line = cli_read_line(&line);
+#endif
+
   if (echo_status == CLI_ECHO_DISABLED) {
     echo_restored = cli_restore_echo(&echo_state);
     newline_written = printf("\n") != EOF;
   }
-  if (!echo_restored || !newline_written) {
+
+#ifndef _WIN32
+  if (signal_guard_active) {
+    signal_restored = cli_restore_signal_guard(&signal_guard);
+    if (interrupted_signal == 0) {
+      interrupted_signal = cli_pending_signal;
+    }
+    cli_pending_signal = 0;
+  }
+  if (interrupted_signal != 0) {
+    if (signal_restored) {
+      (void)raise(interrupted_signal);
+    }
+    input->io_error = true;
+    secure_clear(line.buffer, sizeof line.buffer);
+    return CLI_INPUT_IO;
+  }
+#endif
+
+  if (!signal_restored || !echo_restored || !newline_written) {
     input->io_error = true;
     secure_clear(line.buffer, sizeof line.buffer);
     return CLI_INPUT_IO;
@@ -1208,7 +1361,8 @@ static AppResult run_role_menu(CliInput *input, const Account *actor) {
 
 /**
  * @brief 运行未登录菜单。
- * @details 登录后进入角色菜单，退出登录后回到本菜单；选择 `0` 或遇到 EOF 时结束。
+ * @details 登录后进入角色菜单，退出登录后回到本菜单；选择 `0` 或遇到 EOF
+ * 时结束。
  * @param[in,out] input 会话级输入状态。
  * @return 正常退出或 EOF 时返回 `APP_OK`，否则返回对应错误码。
  */
