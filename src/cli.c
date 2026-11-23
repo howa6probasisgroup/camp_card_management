@@ -128,7 +128,7 @@ static CliEchoStatus cli_disable_echo(CliEchoState *state) {
     return CLI_ECHO_UNAVAILABLE;
   }
 
-  const HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+  HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
   DWORD mode = 0;
   if (input == nullptr || input == INVALID_HANDLE_VALUE ||
       !GetConsoleMode(input, &mode)) {
